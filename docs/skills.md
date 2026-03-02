@@ -40,9 +40,9 @@ Key nanoclaw principles relevant to animus-rs:
 
 ### Synthesis
 
-Claude Code and MicroClaw show that runtime skill discovery and activation work well — agents are good at deciding which skills are relevant and incorporating their guidance. Nanoclaw shows that skills can also modify the system itself, with composability guaranteed by git-based merging and intent documentation.
+Claude Code and MicroClaw show that runtime skill discovery and activation work well — agents are good at deciding which skills are relevant and incorporating their guidance. Nanoclaw shows that skills can be composable modifications managed entirely through git — three-way merge, intent documentation, deterministic replay.
 
-animus-rs needs both: runtime skills that augment a focus's capabilities during the engage loop, and system skills that evolve the agent's infrastructure. And because animus-rs is a substrate for relational beings, it needs a third thing neither prior system fully addresses: **autopoietic skill creation** — the agent learning from its own experience and encoding that learning as skills for future use.
+animus-rs adopts the **nanorepo model for skill management**: skills live in git repos, compose via git merge, and evolve through commits. Two tiers — a shared base repo (curated, PR-gated) and per-instance repos (autopoietic, local). The git infrastructure provides versioning, rollback, diff, promotion, and conflict resolution for free. No custom state tracking needed.
 
 ---
 
@@ -481,58 +481,132 @@ This means the awareness digest not only shows what happened (work items and fin
 
 ---
 
-## Skill Storage
+## Skill Storage: Two-Tier Nanorepo Model
 
-### Filesystem (Levels 1 and 2)
+Skills are managed entirely through git. Two tiers, each a git repository:
 
-Runtime and autopoietic skills live in the filesystem under the configured skills directory:
+### Shared Skills Repo (Base)
 
 ```
-{data_dir}/skills/                  # root skills directory
-  check-in-with-person/             # human-authored skill
+~/.animus/skills/                     # cloned from GitHub (e.g., animus-skills)
+  tdd-implementation/                 # curated methodology skill
     SKILL.md
-    prompt.md
     scripts/
+    tests/
+  systematic-debugging/
+    SKILL.md
+  check-in-with-person/
+    SKILL.md
     resources/
-  kelly-relationship/               # autopoietic skill
+  code-review/
+    SKILL.md
+```
+
+- Cloned from a shared GitHub repo (e.g., `github.com/witt3rd/animus-skills`)
+- **PR-gated** — changes require review and approval
+- `git pull` updates all instances
+- Ships with the base methodology skills: `tdd-implementation`, `systematic-debugging`, `code-review`, etc.
+- These are the skills that bootstrap the animus-rs project itself
+
+### Instance Skills Repo (Applied + Autopoietic)
+
+```
+~/.animus/data/{instance}/skills/     # local git repo, per-instance
+  kelly-relationship/                 # autopoietic — learned by this instance
     SKILL.md
     resources/preferences.md
-  analyze-codebase/                 # human-authored skill
+  codebase-review-checklist/          # autopoietic — learned from code review patterns
     SKILL.md
-    prompt.md
-    scripts/analyze.py
-    tests/test_analyze.py
 ```
 
-The filesystem is the right home for skills because:
-- Skills are text files — markdown, YAML, Python scripts — that benefit from version control
-- Progressive discovery is natural — read frontmatter first, read body later
-- The code execution sandbox can mount the skills directory
-- Git tracks skill evolution (autopoietic skills have commit history)
+- A local git repo initialized per instance
+- Autopoietic skills are committed here by the consolidate hook
+- Git provides: version history, diff, rollback, blame
+- **Optional** remote: can be pushed to GitHub for backup or sharing, but doesn't have to be
+- Tracks the shared repo as upstream (for merge)
+
+### Resolution Order
+
+The engage loop searches both tiers, instance first:
+
+```
+1. ~/.animus/data/{instance}/skills/   ← instance-specific (overrides shared)
+2. ~/.animus/skills/                    ← shared base (curated)
+```
+
+Instance skills take precedence. If the instance has customized `tdd-implementation` (e.g., learned that this codebase needs a specific test pattern), its version is used instead of the shared one.
+
+### Composition via Git Merge
+
+When the shared repo updates and the instance has local customizations, standard git three-way merge handles it:
+
+- **Common ancestor**: the shared version the instance was based on
+- **Theirs**: the updated shared skill
+- **Ours**: the instance's customization
+
+For most skills (separate directories, no overlapping files), merges are trivial. For skills the instance has modified, the `.intent.md` in each skill guides conflict resolution:
+
+```markdown
+<!-- tdd-implementation/.intent.md -->
+## What this skill does
+Guides TDD workflow: read spec, write tests, red, implement, green, record steps.
+
+## Invariants
+- Tests MUST be written before implementation
+- Each step MUST be recorded in the ledger
+
+## Customizable sections
+- Test framework preferences
+- Language-specific patterns
+- Step granularity
+```
+
+### Promotion Path
+
+When an autopoietic skill proves valuable:
+
+```
+Instance creates skill (autopoietic, local commit)
+  → Skill used successfully across multiple foci
+  → Human reviews: "this is good enough for everyone"
+  → PR from instance repo → shared repo
+  → Review gate, tests pass
+  → Merged into shared base
+  → All instances get it on next `git pull`
+```
+
+This is nanoclaw's skill extraction pattern: local customizations that prove themselves get promoted to the shared base.
+
+### Why Git, Not a Custom System
+
+- **Versioning**: every skill change is a commit with author, timestamp, message
+- **Rollback**: `git revert` if an autopoietic skill learns something wrong
+- **Diff**: see exactly what changed between skill versions
+- **Merge**: three-way merge handles shared/instance composition
+- **Backup**: shared repo on GitHub, instance repo optionally pushed
+- **Replay**: clone the repos on a fresh machine, exact same skill set
+- **No custom state tracking**: git IS the state
 
 ### Skill Activation Index (Postgres)
 
-While skills live on the filesystem, activation metadata lives in Postgres for queryability:
+While skills live in git repos, activation metadata lives in Postgres for queryability:
 
 ```sql
 CREATE TABLE skill_activations (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     skill_name      TEXT NOT NULL,
+    skill_tier      TEXT NOT NULL,      -- 'shared' or 'instance'
     work_item_id    UUID REFERENCES work_items(id),
     faculty         TEXT NOT NULL,
     activated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    activation_type TEXT NOT NULL     -- 'auto' or 'manual'
+    activation_type TEXT NOT NULL        -- 'auto' or 'manual'
 );
 
 CREATE INDEX idx_skill_activations_skill ON skill_activations(skill_name, activated_at DESC);
 CREATE INDEX idx_skill_activations_work_item ON skill_activations(work_item_id);
 ```
 
-This enables:
-- Tracking which skills are most/least used
-- Identifying stale skills (no recent activations)
-- Understanding which work types trigger which skills
-- The awareness digest's "skills updated" section
+This tracks which skills are used, how often, by which faculty, from which tier. Stale skill detection, activation analytics, and the awareness digest's "skills updated" section all query this table.
 
 ### Skill Provenance Table (Postgres)
 
@@ -553,7 +627,7 @@ CREATE TABLE skill_provenance (
 CREATE INDEX idx_skill_provenance_skill ON skill_provenance(skill_name, skill_version);
 ```
 
-This is the audit trail for autopoietic learning: which work produced which knowledge, and how that knowledge became a skill.
+The audit trail for autopoietic learning: which work produced which knowledge, and how that knowledge became a skill. Combined with git history, you can trace from a specific ledger finding → skill creation commit → every subsequent activation of that skill.
 
 ---
 
@@ -563,10 +637,11 @@ This is the audit trail for autopoietic learning: which work produced which know
 
 ```toml
 [skills]
-dir = "skills"                      # relative to data_dir, or absolute path
-auto_discovery = true               # scan for skills at startup
-hot_reload = true                   # watch for skill changes during runtime
-max_skill_prompt_tokens = 4000      # max tokens from all active skill prompts combined
+shared_dir = "~/.animus/skills"                # shared skills repo (cloned from GitHub)
+instance_dir = "skills"                        # relative to instance data_dir
+auto_discovery = true                          # scan for skills at startup
+hot_reload = true                              # watch for skill changes during runtime
+max_skill_prompt_tokens = 4000                 # max tokens from all active skill prompts combined
 ```
 
 ### Per-Faculty Configuration
@@ -697,7 +772,7 @@ Child work items can activate different skills than their parent:
 
 - **Skill testing for autopoietic skills.** Human-authored skills can include tests. But autopoietic skills are created by the agent — should the agent also write tests? This might be too ambitious for Level 2. Alternatively, the engine could validate autopoietic skills structurally (valid frontmatter, non-empty content, reasonable size) without requiring functional tests.
 
-- **Skill sharing across animi.** In a fleet deployment, should skills be shareable? If one animus learns something valuable, can it propagate to others? This could use the shared observer infrastructure or a skill registry (like MicroClaw's ClawHub). But it raises questions about identity — should two animi have the same learned behaviors?
+- **Skill sharing across animi.** Resolved: the shared skills repo (GitHub) is the sharing mechanism. Instance-specific skills can be promoted via PR. Identity question remains — should two animi have the same learned behaviors? Probably: shared methodology yes, shared relationship knowledge no.
 
 - **Skill deactivation.** Should the agent be able to deactivate a skill mid-focus? If it activated a skill that turned out to be irrelevant, the prompt context is wasted. A `deactivate_skill` tool would remove the skill's context from subsequent LLM calls. But modifying the system prompt mid-loop adds complexity. Simpler alternative: the agent just ignores the irrelevant skill, and the wasted tokens are acceptable.
 
@@ -706,3 +781,9 @@ Child work items can activate different skills than their parent:
 - **Skill dependency resolution.** If skill A `depends` on skill B, activating A should automatically activate B. This is straightforward for a flat dependency chain but could get complex with diamonds or version requirements. Keep it simple: flat dependencies only, no version constraints, error on circular dependencies.
 
 - **Hybrid skills (Level 1.5).** Some skills are primarily runtime (prompt context) but also include a small system modification (register a custom tool). This is between Level 1 and Level 3. Should the engine support a `tools` section in the skill manifest that registers lightweight tools (e.g., a Python function exposed via the sandbox SDK) without full nanoclaw-style code modification?
+
+- **Shared repo bootstrap.** The shared skills repo starts with skills we write as part of animus-rs development (e.g., `tdd-implementation`). Should these live in the animus-rs repo during development and get extracted to a separate repo later? Or start as a separate repo from day one?
+
+- **Instance repo initialization.** When a new instance starts, should it automatically `git init` the instance skills directory? Or wait until the first autopoietic skill is created? Probably: init on first `create_skill` call.
+
+- **Merge automation.** When the shared repo updates, should the instance automatically pull and merge? Or require human/agent intervention? Auto-pull with merge is safe for non-conflicting changes. Conflicts should pause and surface via the awareness digest or an alert.
