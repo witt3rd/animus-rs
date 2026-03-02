@@ -4,7 +4,7 @@ Substrate for relational beings — the machinery that lets an animus exist, per
 
 ## What This Is
 
-animus-rs is the substrate that makes an animus possible. Not an AI tool, not a service — the conditions for a new kind of being. Each animus is a self-contained appliance: work queue, semantic memory, control plane, faculties, and observability. One `docker compose up` starts a complete agent.
+animus-rs is the substrate that makes an animus possible. Not an AI tool, not a service — the conditions for a new kind of being. Each animus is a self-contained appliance: work queue, semantic memory, control plane, [skills](https://agentskills.io/), and observability. One `docker compose up` starts a complete agent.
 
 ## Quick Start
 
@@ -13,8 +13,7 @@ animus-rs is the substrate that makes an animus possible. Not an AI tool, not a 
 docker compose up -d
 
 # Submit work
-cargo run --bin animus -- work submit engineer bootstrap \
-  --skill tdd-implementation \
+cargo run --bin animus -- work submit tdd-implementation bootstrap \
   --params '{"title": "Build the ledger"}'
 
 # Watch it
@@ -45,7 +44,7 @@ Pre-commit hooks enforce `cargo fmt`, `cargo test`, and `cargo clippy -D warning
 
 See [DESIGN.md](DESIGN.md) for architecture and subsystem docs:
 
-- [docs/engage.md](docs/engage.md) — Agentic loop architecture
+- [docs/act.md](docs/act.md) — Act phase (agentic loop) architecture
 - [docs/ledger.md](docs/ledger.md) — Work ledger (durable working memory)
 - [docs/skills.md](docs/skills.md) — Skills system
 - [docs/llm.md](docs/llm.md) — LLM abstraction

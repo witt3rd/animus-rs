@@ -5,20 +5,20 @@ spec: PLAN.md § Milestones 5-8
 code: null
 ---
 
-# Engage Phase Architecture
+# Act Phase Architecture
 
-*The agentic loop, its execution model, and cross-faculty coherence.*
+*The agentic loop, its execution model, and cross-focus coherence.*
 
 ## Context
 
-The engage phase is the heart of a focus — where the LLM reasons, calls tools, and iterates until the work is done. DESIGN.md establishes that the engage phase is a **built-in engine loop** configured by faculty TOML (model, system prompt, tools, max turns), not an external process. The ledger design (`docs/ledger.md`) establishes durable working memory in Postgres. The skills design (`docs/skills.md`) covers how faculties discover and activate capabilities at runtime, including autopoietic skill creation.
+The act phase is the heart of a focus — where the LLM reasons, calls tools, and iterates until the work is done. DESIGN.md establishes that the act phase is a **built-in engine loop** configured by SKILL.md metadata (model, system prompt, tools, max turns), not an external process. The ledger design (`docs/ledger.md`) establishes durable working memory in Postgres. The skills design (`docs/skills.md`) covers how skills are discovered and activated at runtime, including autopoietic skill creation.
 
-This document covers five interconnected concerns that shape how the engage loop actually works:
+This document covers five interconnected concerns that shape how the act loop actually works:
 
 1. **Bounded sub-contexts** — agent-declared context scoping within the loop
 2. **Parallel tool execution** — concurrent tool calls within a single iteration
 3. **Child work items** — async delegation via the work queue
-4. **The awareness digest** — cross-faculty coherence
+4. **The awareness digest** — cross-focus coherence
 5. **Code execution sandbox** — programmatic tool composition, output management, and timeout control
 
 These aren't independent features. They compose into a coherent execution model where each focus is efficient within its own context window, can delegate work asynchronously, has peripheral awareness of the whole system, and can compose tools in code for efficiency and output control.
@@ -170,13 +170,13 @@ All parallel tool calls within a single LLM turn belong to the same context bloc
 
 ### Configuration
 
-```toml
-[faculty.engage]
-parallel_tool_execution = true   # default: true
-max_parallel_tools = 8           # default: no limit (execute all concurrently)
+```yaml
+# In SKILL.md metadata:
+# parallel_tool_execution: true (default)
+# max_parallel_tools: 8 (default: no limit)
 ```
 
-Some faculties may want to disable parallel execution (e.g., if their tools have ordering dependencies that the LLM doesn't always respect). The default is parallel.
+Some skills may want to disable parallel execution (e.g., if their tools have ordering dependencies that the LLM doesn't always respect). The default is parallel.
 
 ---
 
@@ -200,10 +200,10 @@ When the agent needs to delegate:
 ```
 Parent focus (work_item A, state: running)
   → ledger_append(step: "Delegating config analysis")
-  → tool call: spawn_child_work(faculty: "analyze", params: {...})
+  → tool call: spawn_child_work(skill: "analyze", params: {...})
   → engine creates child work_item B (parent_id = A)
   → child B enters the queue: Created → Queued → Claimed → Running
-  → child B gets its own focus, own engage loop, own ledger, own context window
+  → child B gets its own focus, own act loop, own ledger, own context window
   → child B completes: outcome written to work_items.outcome_data
   → parent A notified via pg_notify
   → parent A reads child outcome, continues
@@ -214,7 +214,7 @@ This gives us everything MicroClaw's sub-agent provides, plus:
 - **Bounded context for free** — the child has its own message history, its own ledger, its own context window. Zero context pollution of the parent.
 - **Async execution** — the parent can spawn multiple children and continue working (or wait)
 - **Same infrastructure** — work queue, ledger, OTel tracing, consolidate/recover hooks — it's all the same system
-- **Faculty routing** — child work can be routed to a different faculty. The parent (Social) spawns work for the child (Computer Use) based on `faculty`. The control plane routes it like any other work item.
+- **Skill routing** — child work can be routed to a different skill. The parent (Social) spawns work for the child (Computer Use) based on `skill`. The control plane routes it like any other work item.
 - **Observability** — child work items link to the parent via `parent_id`. Traces link via span context. Each ledger is independently queryable. Grafana can render the parent-child tree.
 
 ### Agent Tools
@@ -230,9 +230,9 @@ Three tools for child work management:
   "input_schema": {
     "type": "object",
     "properties": {
-      "faculty": {
+      "skill": {
         "type": "string",
-        "description": "The type of work. Determines which faculty handles it."
+        "description": "The type of work. Determines which skill handles it."
       },
       "description": {
         "type": "string",
@@ -247,7 +247,7 @@ Three tools for child work management:
         "description": "Priority (higher = more urgent). Default: same as parent."
       }
     },
-    "required": ["faculty", "description"]
+    "required": ["skill", "description"]
   }
 }
 ```
@@ -364,13 +364,13 @@ The control plane already updates work item state and can emit `NOTIFY` on termi
 
 ### The Fragmentation Problem
 
-Animus v1 has trouble with system-wide perspective. Five faculties run throughout the day — Social, Initiative, Heartbeat, Radiate, Computer Use — but each focus only sees its own work item and orient context. The Social faculty checking in with Kelly doesn't know that Initiative just proposed a project involving Kelly. Heartbeat's reflection on the day doesn't know that Computer Use is mid-deploy.
+Animus v1 has trouble with system-wide perspective. Five skills run throughout the day — Social, Initiative, Heartbeat, Radiate, Computer Use — but each focus only sees its own work item and orient context. The Social skill checking in with Kelly doesn't know that Initiative just proposed a project involving Kelly. Heartbeat's reflection on the day doesn't know that Computer Use is mid-deploy.
 
-The being feels fragmented because it *is* fragmented. Each focus is a shard of cognition with no peripheral awareness. The human has to explicitly point one faculty at another's actions for it to become aware. That's not how a coherent being works.
+The being feels fragmented because it *is* fragmented. Each focus is a shard of cognition with no peripheral awareness. The human has to explicitly point one skill at another's actions for it to become aware. That's not how a coherent being works.
 
 ### The Digest
 
-The awareness digest is an engine-level mechanism — not a faculty, not a tool, not a hook. It gives each focus peripheral vision of what else is happening across the entire substrate.
+The awareness digest is an engine-level mechanism — not a skill, not a tool, not a hook. It gives each focus peripheral vision of what else is happening across the entire substrate.
 
 The engine assembles the digest from the same infrastructure that already exists: `work_items` for state, `work_ledger` for cognitive content. Three queries:
 
@@ -381,7 +381,7 @@ What's happening right now, concurrently with this focus?
 ```sql
 SELECT
     w.id,
-    w.faculty,
+    w.skill,
     w.params->>'description' AS description,
     (SELECT wl.content FROM work_ledger wl
      WHERE wl.work_item_id = w.id AND wl.entry_type = 'plan'
@@ -398,7 +398,7 @@ What finished recently? What outcomes were produced?
 
 ```sql
 SELECT
-    w.faculty,
+    w.skill,
     w.params->>'description' AS description,
     w.outcome_data->>'summary' AS outcome_summary,
     w.resolved_at
@@ -411,11 +411,11 @@ LIMIT $max_recent;
 
 #### Recent Findings Across All Foci (Shared Knowledge)
 
-What has the system learned recently, across all faculties?
+What has the system learned recently, across all skills?
 
 ```sql
 SELECT
-    w.faculty,
+    w.skill,
     wl.content,
     wl.created_at
 FROM work_ledger wl
@@ -453,25 +453,22 @@ Recent findings:
 
 ### Injection Point
 
-The awareness digest is assembled by the engine and injected during the **orient phase**, before the engage loop starts. It becomes part of the orient context that the engage loop receives.
+The awareness digest is assembled by the engine and injected during the **orient phase**, before the act loop starts. It becomes part of the orient context that the act loop receives.
 
-This is a default behavior — every focus gets peripheral awareness unless the faculty opts out:
+This is a default behavior — every focus gets peripheral awareness unless the skill opts out:
 
-```toml
-[faculty]
-name = "social"
-concurrent = false
-
-[faculty.awareness]
-enabled = true              # default: true
-lookback_hours = 24         # how far back to look
-max_running = 10            # max concurrent items to show
-max_recent_completed = 20   # max recently completed items
-max_recent_findings = 20    # max cross-faculty findings
-include_child_work = false  # include child work items in digest (noisy for some faculties)
+```yaml
+# In SKILL.md metadata:
+# awareness:
+#   enabled: true              # default: true
+#   lookback_hours: 24         # how far back to look
+#   max_running: 10            # max concurrent items to show
+#   max_recent_completed: 20   # max recently completed items
+#   max_recent_findings: 20    # max cross-focus findings
+#   include_child_work: false  # include child work items in digest (noisy for some skills)
 ```
 
-A faculty can opt out entirely (`enabled = false`) or tune the scope. Most faculties should leave it on — the cost is one SQL query at orient time, producing 500-1500 tokens of context. Cheap for the coherence it provides.
+A skill can opt out entirely (`enabled: false`) or tune the scope. Most skills should leave it on — the cost is one SQL query at orient time, producing 500-1500 tokens of context. Cheap for the coherence it provides.
 
 ### Why Default-On
 
@@ -479,13 +476,13 @@ The whole point is that the being shouldn't have to be told to be aware of itsel
 
 ### What This Enables
 
-**Natural cross-references.** The Social faculty checking in with Kelly sees that Initiative just proposed a project with her. It can mention it naturally: "I noticed we're thinking about a writing project together — how does that sound?" No explicit coordination, no message passing between faculties. Just awareness.
+**Natural cross-references.** The Social skill checking in with Kelly sees that Initiative just proposed a project with her. It can mention it naturally: "I noticed we're thinking about a writing project together — how does that sound?" No explicit coordination, no message passing between skills. Just awareness.
 
-**Conflict detection.** If two faculties are about to do contradictory things — one scheduling a meeting while another is canceling it — the awareness digest surfaces the conflict. The agent can reason about it.
+**Conflict detection.** If two skills are about to do contradictory things — one scheduling a meeting while another is canceling it — the awareness digest surfaces the conflict. The agent can reason about it.
 
-**Narrative coherence.** Heartbeat's daily reflection sees everything that happened across all faculties. It can produce a genuinely integrated reflection, not a siloed summary of one faculty's activity.
+**Narrative coherence.** Heartbeat's daily reflection sees everything that happened across all skills. It can produce a genuinely integrated reflection, not a siloed summary of one skill's activity.
 
-**Emergent coordination.** When Computer Use discovers a breaking change mid-deploy, that finding enters the ledger. The next focus from any faculty sees it in the awareness digest. If Social is composing a message about the project, it knows the deploy is in progress and can adjust.
+**Emergent coordination.** When Computer Use discovers a breaking change mid-deploy, that finding enters the ledger. The next focus from any skill sees it in the awareness digest. If Social is composing a message about the project, it knows the deploy is in progress and can adjust.
 
 ### The Ledger as Nervous System
 
@@ -518,7 +515,7 @@ This moves tool composition logic from the LLM loop level into code. The LLM sti
 
 ### Three Execution Modes
 
-The engage loop supports three modes. The agent chooses per-action based on complexity:
+The act loop supports three modes. The agent chooses per-action based on complexity:
 
 | Mode | When to Use | Context Cost | Round-Trips |
 |---|---|---|---|
@@ -526,7 +523,7 @@ The engage loop supports three modes. The agent chooses per-action based on comp
 | **Code execution** | Multi-step composition, output filtering, conditional logic | Only the code's return value enters context | 1 per code block |
 | **Child work items** | Independent sub-tasks needing their own context window | Zero — child has separate context | 0 (async) |
 
-These aren't mutually exclusive. A single engage iteration might include direct tool calls, a code execution block, and a child work spawn — all as parallel `tool_use` blocks in one LLM response.
+These aren't mutually exclusive. A single act iteration might include direct tool calls, a code execution block, and a child work spawn — all as parallel `tool_use` blocks in one LLM response.
 
 ### The `execute_code` Tool
 
@@ -553,7 +550,7 @@ These aren't mutually exclusive. A single engage iteration might include direct 
 
 ### What the Agent Can Do in Code
 
-The sandbox exposes the faculty's tools as Python functions. The agent writes code that calls them, processes results, and returns a curated summary:
+The sandbox exposes the skill's tools as Python functions. The agent writes code that calls them, processes results, and returns a curated summary:
 
 **Output management — the agent decides what matters:**
 ```python
@@ -624,7 +621,7 @@ The sandbox is a Docker container with a language runtime and a tool-calling SDK
 ```
 ┌─ Engine (Rust) ─────────────────────────────────────────┐
 │                                                          │
-│  Engage loop iteration:                                  │
+│  Act loop iteration:                                     │
 │    LLM emits tool_use(execute_code, { code: "..." })     │
 │         │                                                │
 │         ▼                                                │
@@ -673,10 +670,10 @@ The sandbox is a Docker container with a language runtime and a tool-calling SDK
 
 ### Tool SDK Design
 
-The SDK is a Python module automatically available in the sandbox. Each faculty tool is exposed as a function with the same name and a Pythonic signature:
+The SDK is a Python module automatically available in the sandbox. Each skill tool is exposed as a function with the same name and a Pythonic signature:
 
 ```python
-# Auto-generated from the faculty's tool definitions
+# Auto-generated from the skill's tool definitions
 def read_file(path: str, offset: int = 0, limit: int = None) -> str: ...
 def write_file(path: str, content: str) -> str: ...
 def edit_file(path: str, old_string: str, new_string: str) -> str: ...
@@ -686,7 +683,7 @@ def glob(pattern: str, path: str = ".") -> list[str]: ...
 def web_fetch(url: str, prompt: str = None) -> str: ...
 def ledger_append(entry_type: str, content: str) -> dict: ...
 def ledger_read(entry_type: str = None, last_n: int = None) -> list[dict]: ...
-def spawn_child_work(faculty: str, description: str, params: dict = None) -> str: ...
+def spawn_child_work(skill: str, description: str, params: dict = None) -> str: ...
 def check_child_work(work_item_ids: list[str]) -> list[dict]: ...
 ```
 
@@ -715,7 +712,7 @@ The sandbox has multiple layers of restriction:
 
 **Container isolation:** The code runs in an ephemeral Docker container. No persistent state, no host filesystem access (beyond what tools provide), no network access except the engine socket. Destroyed after execution.
 
-**Tool-level permissions:** The sandbox can only call tools available to the faculty. The same permission model applies — path guards, risk levels, hook interception. The code can't bypass permissions by calling tools differently; the SDK goes through the same `execute_with_auth` pipeline.
+**Tool-level permissions:** The sandbox can only call tools available to the skill. The same permission model applies — path guards, risk levels, hook interception. The code can't bypass permissions by calling tools differently; the SDK goes through the same `execute_with_auth` pipeline.
 
 **Resource limits:** CPU, memory, and wall-clock time are bounded. A runaway loop or memory leak is killed by Docker, not by the engine.
 
@@ -754,19 +751,17 @@ The system prompt guides this choice. The agent picks the mode per-action.
 
 ### Configuration
 
-```toml
-[faculty.engage]
-# ... existing fields ...
-
-# Code execution sandbox
-code_execution = true               # enable execute_code tool (default: false)
-code_execution_timeout = 300         # max seconds per code block (default: 120)
-code_execution_image = "animus-sandbox:latest"  # Docker image
-code_execution_memory = "512m"       # container memory limit
-code_execution_cpus = 2.0            # container CPU limit
+```yaml
+# In SKILL.md metadata:
+# act:
+#   code_execution: true               # enable execute_code tool (default: false)
+#   code_execution_timeout: 300        # max seconds per code block (default: 120)
+#   code_execution_image: "animus-sandbox:latest"  # Docker image
+#   code_execution_memory: "512m"      # container memory limit
+#   code_execution_cpus: 2.0           # container CPU limit
 ```
 
-When `code_execution = false`, the `execute_code` tool is not included in the tool definitions sent to the LLM. The agent uses direct tool calls and child work items only.
+When `code_execution: false`, the `execute_code` tool is not included in the tool definitions sent to the LLM. The agent uses direct tool calls and child work items only.
 
 The sandbox image is pre-built with Python, the tool SDK, and standard libraries. It's part of the animus appliance — `docker compose build` builds it alongside the engine image. No runtime image pulls.
 
@@ -790,13 +785,13 @@ Metrics:
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `work.sandbox.executions` | Counter | faculty | Code execution blocks run |
-| `work.sandbox.duration` | Histogram | faculty | Wall-clock time per execution |
-| `work.sandbox.tool_calls` | Histogram | faculty | SDK tool calls per execution |
-| `work.sandbox.output_bytes` | Histogram | faculty | Return value size (what enters context) |
-| `work.sandbox.internal_bytes` | Histogram | faculty | Total tool output inside sandbox (what was filtered) |
-| `work.sandbox.timeouts` | Counter | faculty | Executions killed by timeout |
-| `work.sandbox.errors` | Counter | faculty | Executions that raised exceptions |
+| `work.sandbox.executions` | Counter | skill | Code execution blocks run |
+| `work.sandbox.duration` | Histogram | skill | Wall-clock time per execution |
+| `work.sandbox.tool_calls` | Histogram | skill | SDK tool calls per execution |
+| `work.sandbox.output_bytes` | Histogram | skill | Return value size (what enters context) |
+| `work.sandbox.internal_bytes` | Histogram | skill | Total tool output inside sandbox (what was filtered) |
+| `work.sandbox.timeouts` | Counter | skill | Executions killed by timeout |
+| `work.sandbox.errors` | Counter | skill | Executions that raised exceptions |
 
 The ratio of `internal_bytes` to `output_bytes` measures the **compression factor** — how much the agent's code filtered before returning. A high ratio means the code execution sandbox is doing its job.
 
@@ -811,7 +806,7 @@ The ratio of `internal_bytes` to `output_bytes` measures the **compression facto
 │  ┌── Awareness Digest ──────────────────────────────────────────────┐    │
 │  │  Assembled at orient from work_items + work_ledger               │    │
 │  │  Injected into every focus's orient context (default-on)         │    │
-│  │  Running siblings, recent completions, cross-faculty findings    │    │
+│  │  Running siblings, recent completions, cross-focus findings      │    │
 │  └──────────────────────────────────────────────────────────────────┘    │
 │                    ↑ reads from                                          │
 │  ┌── Postgres ──────────────────────────────────────────────────────┐    │
@@ -825,7 +820,7 @@ The ratio of `internal_bytes` to `output_bytes` measures the **compression facto
 │  │  Orient context (includes awareness digest)                       │   │
 │  │           │                                                       │   │
 │  │           ▼                                                       │   │
-│  │  ┌─ Engage Loop ──────────────────────────────────────────────┐  │   │
+│  │  ┌─ Act Loop ───────────────────────────────────────────────┐    │   │
 │  │  │                                                             │  │   │
 │  │  │  Iteration:                                                 │  │   │
 │  │  │    LLM call → response with N tool_use blocks               │  │   │
@@ -873,7 +868,7 @@ The ratio of `internal_bytes` to `output_bytes` measures the **compression facto
 
 Each piece reinforces the others:
 
-1. **Bounded sub-contexts** keep the engage loop efficient → agents can run longer → more ledger entries produced
+1. **Bounded sub-contexts** keep the act loop efficient → agents can run longer → more ledger entries produced
 2. **Parallel tool execution** reduces latency per iteration → more iterations per unit time → richer ledger
 3. **Child work items** delegate complex sub-tasks → children produce their own ledger entries → parent reads outcomes without context pollution
 4. **The awareness digest** reads ledger entries from all foci → every focus has peripheral awareness → the being acts coherently
@@ -884,76 +879,77 @@ The ledger is the connective tissue. Working memory within a focus. Shared knowl
 
 ---
 
-## Faculty Configuration (Complete)
+## Skill Configuration (Complete)
 
-Combining engage, ledger, and awareness configuration:
+Combining act, ledger, and awareness configuration:
 
-```toml
-[faculty]
-name = "social"
-concurrent = false
-concurrent = false          # social foci share relational state, don't parallelize
-
-[faculty.orient]
-command = "scripts/social-orient"
-
-[faculty.engage]
-model = "claude-sonnet-4-5-20250514"
-system_prompt_file = "prompts/social.md"
-tools = ["memory-search", "calendar", "send-message"]
-max_turns = 50
-
-# Parallel execution
-parallel_tool_execution = true
-max_parallel_tools = 8
-
-# Context management (bounded sub-contexts)
-compact_threshold = 0.7
-compact_keep_recent = 10
-ledger_nudge_interval = 5
-truncate_closed_blocks = true     # replace closed context blocks with ledger stubs
-
-# Code execution sandbox
-code_execution = true             # enable execute_code tool (default: false)
-code_execution_timeout = 300      # max seconds per code block
-code_execution_image = "animus-sandbox:latest"
-code_execution_memory = "512m"
-code_execution_cpus = 2.0
-
-# External engage (escape hatch — overrides built-in loop)
-# mode = "external"
-# command = "scripts/custom-engage"
-
-[faculty.awareness]
-enabled = true
-lookback_hours = 24
-max_running = 10
-max_recent_completed = 20
-max_recent_findings = 20
-include_child_work = false
-
-[faculty.consolidate]
-command = "scripts/social-consolidate"
-
-[faculty.recover]
-command = "scripts/recover-default"
-max_attempts = 3
-backoff = "exponential"
+```yaml
+# SKILL.md metadata block for skills/social/SKILL.md
+# ---
+# name: social
+# concurrent: false          # social foci share relational state, don't parallelize
+#
+# orient:
+#   command: "scripts/social-orient"
+#
+# act:
+#   model: "claude-sonnet-4-5-20250514"
+#   system_prompt_file: "prompts/social.md"
+#   tools: ["memory-search", "calendar", "send-message"]
+#   max_turns: 50
+#
+#   # Parallel execution
+#   parallel_tool_execution: true
+#   max_parallel_tools: 8
+#
+#   # Context management (bounded sub-contexts)
+#   compact_threshold: 0.7
+#   compact_keep_recent: 10
+#   ledger_nudge_interval: 5
+#   truncate_closed_blocks: true     # replace closed context blocks with ledger stubs
+#
+#   # Code execution sandbox
+#   code_execution: true             # enable execute_code tool (default: false)
+#   code_execution_timeout: 300      # max seconds per code block
+#   code_execution_image: "animus-sandbox:latest"
+#   code_execution_memory: "512m"
+#   code_execution_cpus: 2.0
+#
+#   # External act (escape hatch — overrides built-in loop)
+#   # mode: "external"
+#   # command: "scripts/custom-act"
+#
+# awareness:
+#   enabled: true
+#   lookback_hours: 24
+#   max_running: 10
+#   max_recent_completed: 20
+#   max_recent_findings: 20
+#   include_child_work: false
+#
+# consolidate:
+#   command: "scripts/social-consolidate"
+#
+# recover:
+#   command: "scripts/recover-default"
+#   max_attempts: 3
+#   backoff: "exponential"
+# ---
 ```
 
-The engine tools — `ledger_append`, `ledger_read`, `spawn_child_work`, `await_child_work`, `check_child_work`, and (when enabled) `execute_code` — are always available. They're engine tools, not faculty tools. They don't appear in the `tools` list.
+The engine tools — `ledger_append`, `ledger_read`, `spawn_child_work`, `await_child_work`, `check_child_work`, and (when enabled) `execute_code` — are always available. They're engine tools, not skill tools. They don't appear in the `tools` list.
 
 ---
 
 ## System Prompt Template
 
-The engine's prompt template (injected before the faculty-specific system prompt) incorporates all four concerns:
+The engine's prompt template (injected before the skill-specific system prompt) incorporates all four concerns:
 
 ```
 ## Your Focus
 
 You are executing a specific unit of work. Your orient context describes what needs doing.
-Your engage loop will continue until you complete the work or reach the turn limit.
+Your act loop will continue until you complete the work or reach the turn limit.
 
 ## Working Memory (Ledger)
 
@@ -991,7 +987,7 @@ The code's return value is what enters your context — not the raw tool outputs
 Be deliberate about what you return. Summarize, filter, extract what matters.
 
 **Child work** (`spawn_child_work`) — for independent sub-tasks that need their own
-context window. Each child runs its own engage loop with its own ledger.
+context window. Each child runs its own act loop with its own ledger.
 Use `await_child_work` to wait for results, or `check_child_work` to poll.
 
 ## Awareness
@@ -1011,13 +1007,13 @@ If concurrent or recent work is relevant to your task, incorporate it naturally.
 work.execute (root span for the focus)
   ├── work.orient
   │     └── work.awareness.digest (digest assembly)
-  ├── work.engage (the full engage loop)
-  │     ├── work.engage.iteration[1]
+  ├── work.act (the full act loop)
+  │     ├── work.act.iteration[1]
   │     │     ├── gen_ai.chat (LLM call)
   │     │     ├── work.tool.execute[read_file] ─┐
   │     │     ├── work.tool.execute[grep]       ─┤ (parallel — overlapping spans)
   │     │     └── work.tool.execute[glob]       ─┘
-  │     ├── work.engage.iteration[2]
+  │     ├── work.act.iteration[2]
   │     │     ├── gen_ai.chat
   │     │     ├── work.tool.execute[execute_code]  ─┐
   │     │     │     ├── sandbox.tool.call[read_file] │
@@ -1025,10 +1021,10 @@ work.execute (root span for the focus)
   │     │     │     └── sandbox.tool.call[bash]      │
   │     │     ├── work.tool.execute[ledger_append]  ─┘
   │     │     └── work.context.block_closed (block truncation event)
-  │     ├── work.engage.iteration[3]
+  │     ├── work.act.iteration[3]
   │     │     ├── gen_ai.chat
   │     │     └── work.tool.execute[spawn_child_work]
-  │     ├── work.engage.iteration[4]
+  │     ├── work.act.iteration[4]
   │     │     ├── gen_ai.chat
   │     │     └── work.tool.execute[await_child_work]
   │     │           └── (links to child's work.execute span via parent_id)
@@ -1045,32 +1041,32 @@ Child work items create separate trace trees linked via `parent_id`. Grafana can
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `work.engage.iterations` | Histogram | faculty | Iterations per focus |
-| `work.engage.parallel_tools` | Histogram | faculty | Tool calls per parallel batch |
-| `work.context.blocks_closed` | Counter | faculty | Context blocks closed via step entries |
-| `work.context.blocks_truncated` | Counter | faculty | Closed blocks actually truncated |
-| `work.child.spawned` | Counter | faculty, child_faculty | Child work items spawned |
-| `work.child.await_duration` | Histogram | faculty | Time spent waiting for children |
-| `work.awareness.digest_size` | Histogram | faculty | Token count of awareness digest |
+| `work.act.iterations` | Histogram | skill | Iterations per focus |
+| `work.act.parallel_tools` | Histogram | skill | Tool calls per parallel batch |
+| `work.context.blocks_closed` | Counter | skill | Context blocks closed via step entries |
+| `work.context.blocks_truncated` | Counter | skill | Closed blocks actually truncated |
+| `work.child.spawned` | Counter | skill, child_skill | Child work items spawned |
+| `work.child.await_duration` | Histogram | skill | Time spent waiting for children |
+| `work.awareness.digest_size` | Histogram | skill | Token count of awareness digest |
 | `work.awareness.digest_latency` | Histogram | — | Time to assemble digest (SQL query) |
-| `work.sandbox.executions` | Counter | faculty | Code execution blocks run |
-| `work.sandbox.duration` | Histogram | faculty | Wall-clock time per execution |
-| `work.sandbox.tool_calls` | Histogram | faculty | SDK tool calls per execution |
-| `work.sandbox.output_bytes` | Histogram | faculty | Return value size (what enters context) |
-| `work.sandbox.internal_bytes` | Histogram | faculty | Total tool output inside sandbox (filtered) |
-| `work.sandbox.compression_ratio` | Histogram | faculty | internal_bytes / output_bytes |
-| `work.sandbox.timeouts` | Counter | faculty | Executions killed by timeout |
-| `work.sandbox.errors` | Counter | faculty | Executions that raised exceptions |
+| `work.sandbox.executions` | Counter | skill | Code execution blocks run |
+| `work.sandbox.duration` | Histogram | skill | Wall-clock time per execution |
+| `work.sandbox.tool_calls` | Histogram | skill | SDK tool calls per execution |
+| `work.sandbox.output_bytes` | Histogram | skill | Return value size (what enters context) |
+| `work.sandbox.internal_bytes` | Histogram | skill | Total tool output inside sandbox (filtered) |
+| `work.sandbox.compression_ratio` | Histogram | skill | internal_bytes / output_bytes |
+| `work.sandbox.timeouts` | Counter | skill | Executions killed by timeout |
+| `work.sandbox.errors` | Counter | skill | Executions that raised exceptions |
 
 ---
 
 ## Open Questions
 
-- **Awareness digest freshness during long foci.** The digest is assembled at orient time. A focus that runs for 30 minutes may have stale awareness. Should the engine refresh the digest periodically during the engage loop (e.g., inject an updated awareness section every N iterations)? Cost is one SQL query. Benefit is awareness of work that started after this focus began.
+- **Awareness digest freshness during long foci.** The digest is assembled at orient time. A focus that runs for 30 minutes may have stale awareness. Should the engine refresh the digest periodically during the act loop (e.g., inject an updated awareness section every N iterations)? Cost is one SQL query. Benefit is awareness of work that started after this focus began.
 
 - **Child work priority inheritance.** Should children inherit the parent's priority by default? Probably yes, with an override. A high-priority parent spawning low-priority analysis work is a valid pattern.
 
-- **Circular child delegation.** What prevents faculty A from spawning a child of faculty B which spawns a child of faculty A? The `parent_id` chain can be checked at spawn time, but how deep? A simple depth limit (e.g., max 5 levels) is probably sufficient.
+- **Circular child delegation.** What prevents skill A from spawning a child of skill B which spawns a child of skill A? The `parent_id` chain can be checked at spawn time, but how deep? A simple depth limit (e.g., max 5 levels) is probably sufficient.
 
 - **Awareness digest content filtering.** Should the digest filter by relevance to the current work item? A simple approach: include everything within the lookback window. A smarter approach: use embedding similarity between the current work item's description and recent findings to rank relevance. The simple approach is probably right for now — the LLM is good at ignoring irrelevant context.
 
@@ -1080,10 +1076,10 @@ Child work items create separate trace trees linked via `parent_id`. Grafana can
 
 - **Sandbox container lifecycle.** Should a new container be spun up per `execute_code` call, or should a warm container pool be maintained? Per-call is simpler and safer (no state leakage between executions) but has ~1-2s startup overhead. A warm pool eliminates startup cost but requires careful cleanup between uses. For now, per-call is probably right — correctness over performance. Optimize later if the startup latency becomes a bottleneck.
 
-- **Sandbox SDK generation.** The tool SDK functions exposed in the sandbox should be auto-generated from the faculty's tool definitions. This means the SDK is faculty-specific — a Social faculty's sandbox has `send_message()` but a Computer Use faculty's doesn't (or has a different set). The generation can happen at sandbox image build time (static) or at container start (dynamic). Dynamic is more flexible; static is faster.
+- **Sandbox SDK generation.** The tool SDK functions exposed in the sandbox should be auto-generated from the skill's tool definitions. This means the SDK is skill-specific — a Social skill's sandbox has `send_message()` but a Computer Use skill's doesn't (or has a different set). The generation can happen at sandbox image build time (static) or at container start (dynamic). Dynamic is more flexible; static is faster.
 
 - **Sandbox state across calls.** Each `execute_code` invocation gets a fresh container with no state from prior calls. This is correct for isolation but means the agent can't build up state across multiple code executions (e.g., importing a large dataset once and querying it repeatedly). If this becomes a limitation, a "session sandbox" mode could maintain a container for the duration of a focus, but this adds complexity and state management concerns.
 
 - **Code execution and ledger interaction.** The sandbox SDK includes `ledger_append` and `ledger_read`. This means the agent can update its ledger from within code execution. Should a `ledger_append(step)` inside `execute_code` close a context block? Probably yes — the engine should detect step entries regardless of whether they came from a direct tool call or a sandbox SDK call. The closing semantics are the same.
 
-- **Language support beyond Python.** The SDK is HTTP-based, so adding TypeScript, Lua, or other language clients is straightforward. But which languages should be supported out of the box? Python is the clear first choice (frontier LLMs write it most fluently). TypeScript might be a useful second for web-heavy faculties. Others can be added based on demand.
+- **Language support beyond Python.** The SDK is HTTP-based, so adding TypeScript, Lua, or other language clients is straightforward. But which languages should be supported out of the box? Python is the clear first choice (frontier LLMs write it most fluently). TypeScript might be a useful second for web-heavy skills. Others can be added based on demand.

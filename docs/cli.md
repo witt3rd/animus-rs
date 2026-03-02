@@ -15,19 +15,21 @@ The CLI is how you interact with a running animus instance. It connects to the s
 
 This means the CLI works whether the daemon is running or not. You can submit work, inspect state, and read the ledger even when the control plane is down. The database is the source of truth, not the daemon.
 
+The CLI also serves as the building block for skill hook scripts. Orient and consolidate hooks call CLI commands to perform sub-LLM calls, memory search, ledger operations, and work submission. See `skills/engage/scripts/` for the reference implementation.
+
 ## Commands
 
 ### `animus serve`
 
-Run the control plane daemon. This is the existing behavior — watches queues, routes work to faculties, spawns foci.
+Run the control plane daemon. Watches queues, discovers skills, spawns foci.
 
 ```
-animus serve [--faculties DIR] [--max-concurrent N]
+animus serve [--skills DIR] [--max-concurrent N]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--faculties` | `./faculties` | Directory containing faculty TOML configs |
+| `--skills` | `./skills` | Directory containing skill packages (SKILL.md) |
 | `--max-concurrent` | `4` | Global maximum concurrent foci |
 
 ### `animus work submit`
@@ -35,27 +37,29 @@ animus serve [--faculties DIR] [--max-concurrent N]
 Submit a work item to the queue.
 
 ```
-animus work submit <faculty> <source> [OPTIONS]
+animus work submit <skill> <source> [OPTIONS]
 ```
 
 | Argument / Flag | Required | Description |
 |---|---|---|
-| `<faculty>` | yes | Which faculty handles this work |
+| `<skill>` | yes | Which skill handles this work (must match a SKILL.md name) |
 | `<source>` | yes | Provenance source (e.g., "bootstrap", "heartbeat", "user") |
-| `--skill` | no | Skill that drives the methodology (e.g., "tdd-implementation") |
 | `--dedup-key` | no | Structural dedup key |
 | `--trigger` | no | Provenance trigger info |
 | `--params` | no | JSON object with work parameters |
 | `--priority` | no | Priority (default: 0, higher = more urgent) |
 
 ```sh
-# Submit a work item to the engineer faculty with the TDD skill
-animus work submit engineer bootstrap \
-  --skill "tdd-implementation" \
+# Submit a work item using the tdd-implementation skill
+animus work submit tdd-implementation bootstrap \
   --dedup-key "milestone=M4-work-ledger" \
   --trigger "PLAN.md" \
   --priority 10 \
   --params '{"milestone": "M4", "title": "Work Ledger", "spec": "docs/ledger.md"}'
+
+# Submit a social interaction
+animus work submit engage user \
+  --params '{"person": "kelly", "text": "hey cookie!"}'
 ```
 
 Output: the work item ID and whether it was created or merged.
@@ -71,17 +75,17 @@ animus work list [OPTIONS]
 | Flag | Default | Description |
 |---|---|---|
 | `--state` | all | Filter by state (queued, running, completed, failed, dead, merged) |
-| `--faculty` | all | Filter by faculty |
+| `--skill` | all | Filter by skill |
 | `--limit` | 20 | Max items to show |
 | `--parent` | none | Show children of a specific work item |
 
 ```sh
 animus work list
 animus work list --state queued
-animus work list --faculty engineer
+animus work list --skill tdd-implementation
 ```
 
-Output: table with id (short), faculty, skill, state, dedup_key, created_at.
+Output: table with id (short), skill, state, priority, created_at.
 
 ### `animus work show`
 
@@ -91,7 +95,7 @@ Show full details of a work item.
 animus work show <id>
 ```
 
-Shows: all fields, provenance, outcome (if terminal), parent/child links, and ledger entries (once the ledger exists).
+Shows: all fields, provenance, outcome (if terminal), parent/child links, and ledger entries (once the ledger exists). Supports `--json` flag for machine-readable output (used by hook scripts).
 
 ### `animus ledger show`
 
@@ -131,24 +135,73 @@ animus ledger append abc123 step "Implemented SseParser::feed(), unit tests gree
 
 *Available after M4.*
 
-### `animus faculty list`
+### `animus skill list`
 
-List registered faculties and their accepted work types.
+List discovered skills and their metadata.
 
 ```
-animus faculty list [--dir DIR]
+animus skill list [--dir DIR]
 ```
 
 ```sh
-$ animus faculty list
-NAME        CONCURRENT  ISOLATION
-engineer    true        worktree
-social      false       -
+$ animus skill list
+NAME                  CONCURRENT  ISOLATION  HOOKS
+engage                true        -          orient, consolidate, recover
+tdd-implementation    true        worktree   orient, consolidate
+```
+
+### `animus llm complete`
+
+Run a sub-LLM call. Used by hook scripts for classification, extraction, and other pipeline stages.
+
+```
+animus llm complete --prompt-file PATH [--var key=value]... [--model MODEL] [--format FORMAT]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--prompt-file` | required | Markdown prompt with `{{ var }}` placeholders |
+| `--var` | none | Template variable substitution (repeatable) |
+| `--model` | `sonnet` | Model to use (sonnet, opus, haiku) |
+| `--format` | `text` | Output format (text, yaml, json) |
+
+```sh
+animus llm complete \
+  --prompt-file skills/engage/prompt/classify-inbound.md \
+  --var person="kelly" \
+  --var message="hey cookie!" \
+  --format yaml
+```
+
+*Used extensively by orient/consolidate hooks. See `skills/engage/scripts/` for examples.*
+
+### `animus memory search`
+
+Vector similarity search across stored memories.
+
+```
+animus memory search "query" [--person NAME] [--limit N] [--format FORMAT]
+```
+
+### `animus rel show`
+
+Display relationship data for a person.
+
+```
+animus rel show <person> [--format FORMAT]
+```
+
+### `animus identity show`
+
+Display the animus's self-knowledge.
+
+```
+animus identity show [--format FORMAT]
 ```
 
 ### `animus status`
 
-Show the appliance status: database connectivity, queue depth, active foci, registered faculties, unroutable work.
+Show the appliance status: database connectivity, queue depth, active foci, discovered skills, unroutable work.
 
 ```
 animus status
@@ -157,9 +210,9 @@ animus status
 ```
 Database:    connected (28 work items, 2 memories)
 Queue:       4 messages (3 visible, 1 in-flight)
-Faculties:   1 registered (engineer)
+Skills:      2 discovered (engage, tdd-implementation)
 Active foci: 0 / 4
-Unroutable:  3 items (no matching faculty)
+Unroutable:  3 items (no matching skill)
 ```
 
 ---
@@ -180,8 +233,8 @@ struct Cli {
 enum Command {
     /// Run the control plane daemon
     Serve {
-        #[arg(long, default_value = "./faculties")]
-        faculties: PathBuf,
+        #[arg(long, default_value = "./skills")]
+        skills: PathBuf,
         #[arg(long, default_value_t = 4)]
         max_concurrent: usize,
     },
@@ -195,10 +248,20 @@ enum Command {
         #[command(subcommand)]
         action: LedgerAction,
     },
-    /// List registered faculties
-    Faculty {
+    /// Skill operations
+    Skill {
         #[command(subcommand)]
-        action: FacultyAction,
+        action: SkillAction,
+    },
+    /// LLM sub-calls (used by hook scripts)
+    Llm {
+        #[command(subcommand)]
+        action: LlmAction,
+    },
+    /// Memory operations
+    Memory {
+        #[command(subcommand)]
+        action: MemoryAction,
     },
     /// Show appliance status
     Status,
@@ -224,13 +287,17 @@ Every command connects to Postgres via `DATABASE_URL`, runs migrations, and oper
 
 ## What to Build Now
 
-For the immediate bootstrap, we need three commands:
+The CLI grows with the system. Current priority:
 
-1. **`animus work submit`** — so we can submit our first real work item
-2. **`animus work list`** — so we can see what's in the queue
-3. **`animus serve`** — already exists, just needs to become a subcommand
+1. **`animus serve`** — control plane daemon (exists)
+2. **`animus work submit/list/show`** — work management (exists)
+3. **`animus llm complete`** — sub-LLM calls for hook scripts (needed for orient/consolidate)
+4. **`animus memory search`** — vector search for hook scripts
+5. **`animus ledger append/show`** — ledger operations (needed for M4)
+6. **`animus skill list`** — skill discovery
+7. **`animus rel show`**, **`animus identity show`** — context loading for hooks
 
-Everything else (`work show`, `ledger *`, `faculty list`, `status`) can be added as we need it. The CLI grows with the system.
+The engage skill's hook scripts (`skills/engage/scripts/`) define the full CLI interface needed. Each command is "red" until implemented.
 
 ---
 

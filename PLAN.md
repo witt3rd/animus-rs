@@ -6,13 +6,13 @@
 
 Animus builds itself. The design docs are skills. PLAN.md is the work queue. The test signatures are acceptance criteria. Each milestone is a work item.
 
-Before animus exists, Claude Code proxies the engage loop — reading design docs as skills, writing tests first, implementing to green, recording findings that validate the designs. The human is the orient + consolidate hooks: preparing context, reviewing results, deciding what's next.
+Before animus exists, Claude Code proxies the act loop — reading design docs as skills, writing tests first, implementing to green, recording findings that validate the designs. The human is the orient + consolidate hooks: preparing context, reviewing results, deciding what's next.
 
 Every friction point during implementation is a design signal. If context is lost mid-implementation, that's a finding about compaction. If a design doc doesn't guide implementation well enough, that's a finding about skill structure. If cross-milestone dependencies are hard to track, that's a finding about the awareness digest. We validate the model by living it.
 
 ### The Kernel (Human + Claude)
 
-M3 (LLM client) + M4 (work ledger) + M5a (minimal engage loop) must be built by the human-Claude collaboration. This is the bootstrap kernel — the smallest thing that can do work.
+M3 (LLM client) + M4 (work ledger) + M5a (minimal act loop) must be built by the human-Claude collaboration. This is the bootstrap kernel — the smallest thing that can do work.
 
 ### Self-Construction (Animus)
 
@@ -26,7 +26,7 @@ Even during kernel construction, we follow animus patterns:
 |---|---|
 | Work item | PLAN.md milestone |
 | Orient | Human prepares context ("implement M3") |
-| Engage loop | Claude iterates: read skill → write tests → implement → green |
+| Act loop | Claude iterates: read skill → write tests → implement → green |
 | Ledger entries | Findings recorded in commits, session notes, doc updates |
 | Skills | Design docs activated for the relevant milestone |
 | Consolidate | Human reviews, decides next work item |
@@ -38,12 +38,12 @@ Even during kernel construction, we follow animus patterns:
 - Deep analysis of MicroClaw's agent loop (`docs/research/microclaw/agent.md`)
 
 ### Design Decisions
-1. Engage phase is a built-in loop (orient/consolidate/recover remain hooks)
+1. Act phase is a built-in loop (orient/consolidate/recover are hook scripts in skill's scripts/)
 2. Work ledger in Postgres (append-only typed entries, agent-maintained)
 3. Bounded sub-contexts via ledger step entries (not token counting)
 4. Parallel tool execution via `tokio::JoinSet`
 5. Child work items via the work queue (not in-process sub-agents)
-6. Awareness digest for cross-faculty coherence (default-on)
+6. Awareness digest for cross-focus coherence (default-on)
 7. Code execution sandbox (Docker, Python, tool SDK)
 8. Skills with progressive discovery and autopoietic creation
 9. Drop rig-core for LLM calls (thin `LlmClient` via `reqwest` + SSE)
@@ -52,7 +52,7 @@ Even during kernel construction, we follow animus patterns:
 ### Design Documents
 | Document | Covers |
 |---|---|
-| `docs/engage.md` | Engage loop: sub-contexts, parallel tools, child work, awareness, sandbox |
+| `docs/act.md` | Act loop: sub-contexts, parallel tools, child work, awareness, sandbox |
 | `docs/ledger.md` | Work ledger schema, tools, context management |
 | `docs/skills.md` | Skill discovery, activation, autopoiesis |
 | `docs/llm.md` | LlmClient trait, Anthropic/OpenAI providers |
@@ -264,7 +264,7 @@ fn ledger_entry_type_roundtrips_through_string() {
 
 ---
 
-## Milestone 5a: Minimal Engage Loop
+## Milestone 5a: Minimal Act Loop
 
 **The simplest viable agentic loop.**
 
@@ -273,7 +273,7 @@ Depends on: M3 (LLM client), M4 (ledger).
 ### Tests First
 
 ```rust
-// tests/engage_test.rs
+// tests/act_test.rs
 
 #[test]
 fn tool_registry_returns_definitions_for_registered_tools() {
@@ -294,14 +294,14 @@ fn tool_registry_returns_error_for_unknown_tool() {
 
 #[test]
 #[ignore] // needs Postgres + LLM
-fn engage_loop_terminates_on_end_turn() {
-    // Faculty with max_turns=10, prompt that requires no tools
+fn act_loop_terminates_on_end_turn() {
+    // Skill with max_turns=10, prompt that requires no tools
     // Loop runs 1 iteration, returns text, stop_reason=EndTurn
 }
 
 #[test]
 #[ignore]
-fn engage_loop_executes_tool_and_continues() {
+fn act_loop_executes_tool_and_continues() {
     // Prompt that triggers ledger_append tool call
     // Loop runs 2+ iterations: tool call → tool result → final text
     // Ledger entry exists in DB after
@@ -309,14 +309,14 @@ fn engage_loop_executes_tool_and_continues() {
 
 #[test]
 #[ignore]
-fn engage_loop_respects_max_turns() {
-    // Faculty with max_turns=3, prompt that always calls tools
+fn act_loop_respects_max_turns() {
+    // Skill with max_turns=3, prompt that always calls tools
     // Loop runs exactly 3 iterations, returns max-turns error/message
 }
 
 #[test]
 #[ignore]
-fn engage_loop_handles_tool_error_gracefully() {
+fn act_loop_handles_tool_error_gracefully() {
     // Tool that always returns is_error=true
     // LLM receives error in tool_result, can reason about it
     // Loop doesn't crash
@@ -324,7 +324,7 @@ fn engage_loop_handles_tool_error_gracefully() {
 
 #[test]
 fn system_prompt_includes_ledger_instructions() {
-    // Build system prompt for a faculty
+    // Build system prompt for a skill
     // Contains "Working Memory" section with ledger_append guidance
 }
 
@@ -345,11 +345,11 @@ fn messages_alternate_user_assistant_roles() {
 ### Then Implement
 - `src/tools/mod.rs` — `Tool` trait, `ToolDefinition`, `ToolResult`, `ToolRegistry`
 - `src/tools/ledger.rs` — `LedgerAppendTool`, `LedgerReadTool` (wired to `Db`)
-- `src/engine/engage.rs` — `EngageLoop::run()`: the iteration, LLM call, tool dispatch
+- `src/engine/act.rs` — `ActLoop::run()`: the iteration, LLM call, tool dispatch
 - `src/engine/prompt.rs` — System prompt template assembly
 - Wire into `src/engine/focus.rs`
 
-**Design doc:** [docs/engage.md](docs/engage.md) §§ 1-2
+**Design doc:** [docs/act.md](docs/act.md) §§ 1-2
 
 ---
 
@@ -377,13 +377,13 @@ fn parallel_tool_results_match_by_id() {
 
 #[test]
 fn parallel_tools_disabled_executes_sequentially() {
-    // Faculty config: parallel_tool_execution = false
+    // Skill metadata: parallel_tool_execution = false
     // 3 tools execute in order (total time ≈ 3x single)
 }
 ```
 
 ### Then Implement
-- `tokio::JoinSet` dispatch in `EngageLoop::run()`
+- `tokio::JoinSet` dispatch in `ActLoop::run()`
 - `parallel_tool_execution` and `max_parallel_tools` config
 
 ---
@@ -442,15 +442,15 @@ fn compaction_fallback_fires_on_token_pressure() {
 
 ### Then Implement
 - `src/engine/context.rs` — `ContextBlocks`, truncation, compaction fallback
-- Nudge logic in `EngageLoop`
+- Nudge logic in `ActLoop`
 
-**Design doc:** [docs/engage.md](docs/engage.md) § 1, [docs/ledger.md](docs/ledger.md)
+**Design doc:** [docs/act.md](docs/act.md) § 1, [docs/ledger.md](docs/ledger.md)
 
 ---
 
 ## Milestone 6: Awareness Digest
 
-Depends on: M4 (ledger), M5a (engage loop).
+Depends on: M4 (ledger), M5a (act loop).
 
 ### Tests First
 
@@ -471,8 +471,8 @@ fn digest_includes_recently_completed_work() {
 
 #[test]
 #[ignore]
-fn digest_includes_cross_faculty_findings() {
-    // Ledger finding from a different faculty's focus
+fn digest_includes_cross_focus_findings() {
+    // Ledger finding from a different skill's focus
     // Appears in current focus's digest
 }
 
@@ -492,7 +492,7 @@ fn digest_respects_lookback_hours() {
 #[test]
 #[ignore]
 fn digest_disabled_returns_empty() {
-    // Faculty config: awareness.enabled = false
+    // Skill metadata: awareness.enabled = false
     // Digest is empty string
 }
 
@@ -507,7 +507,7 @@ fn digest_format_is_readable() {
 - `src/engine/awareness.rs` — digest assembly and formatting
 - Inject in `src/engine/focus.rs` during orient
 
-**Design doc:** [docs/engage.md](docs/engage.md) § 4
+**Design doc:** [docs/act.md](docs/act.md) § 4
 
 ---
 
@@ -572,7 +572,7 @@ fn child_outcome_includes_ledger_summary() {
 - `src/tools/child_work.rs`
 - `NOTIFY` on terminal state transitions in `src/db/work.rs`
 
-**Design doc:** [docs/engage.md](docs/engage.md) § 3
+**Design doc:** [docs/act.md](docs/act.md) § 3
 
 ---
 
@@ -636,7 +636,7 @@ fn sandbox_ledger_append_from_code_closes_context_block() {
 - `src/engine/sandbox.rs` — container lifecycle, HTTP endpoint
 - `src/tools/sandbox.rs` — `execute_code` tool
 
-**Design doc:** [docs/engage.md](docs/engage.md) § 5
+**Design doc:** [docs/act.md](docs/act.md) § 5
 
 ---
 
@@ -662,7 +662,7 @@ fn skill_manager_discovers_skills_from_directory() {
 }
 
 #[test]
-fn skill_trigger_matches_faculty() {
+fn skill_trigger_matches_keywords() {
     // Skill with triggers.faculties = ["engineer"]
     // matches("engineer") → true, matches("social") → false
 }
@@ -723,7 +723,7 @@ fn skill_provenance_links_to_ledger_entries() {
 
 ---
 
-## Milestone 5d: Engage Hooks
+## Milestone 5d: Act Hooks
 
 Depends on: M5a.
 
@@ -739,7 +739,7 @@ fn hook_discovery_finds_hooks_in_directory() {
 #[test]
 fn hook_before_llm_can_block() {
     // Hook returns {"action": "block", "reason": "nope"}
-    // Engage loop exits with reason
+    // Act loop exits with reason
 }
 
 #[test]
@@ -776,7 +776,7 @@ fn hook_timeout_treated_as_allow() {
 ### Then Implement
 - `src/engine/hooks.rs`
 
-**Design doc:** [docs/engage.md](docs/engage.md) (hook sections throughout)
+**Design doc:** [docs/act.md](docs/act.md) (hook sections throughout)
 
 ---
 
@@ -784,9 +784,9 @@ fn hook_timeout_treated_as_allow() {
 
 ```
 M3: LLM Client ─────────────┐
-                              ├──→ M5a: Minimal Engage Loop ──→ M5b: Parallel Tools
+                              ├──→ M5a: Minimal Act Loop ──→ M5b: Parallel Tools
 M4: Work Ledger ─────────────┘          │                    ──→ M5c: Bounded Sub-Contexts
-                                        │                    ──→ M5d: Engage Hooks
+                                        │                    ──→ M5d: Act Hooks
                                         ├──→ M6: Awareness Digest
                                         ├──→ M7: Child Work Items
                                         ├──→ M8: Code Execution Sandbox
@@ -804,7 +804,7 @@ Everything after M5a is parallelizable.
 ### Phase 1: Kernel (Human + Claude as proxy-animus)
 
 1. **M3 + M4 in parallel** — LLM client + work ledger. The two foundations.
-2. **M5a** — minimal engage loop. The kernel is complete when this is green.
+2. **M5a** — minimal act loop. The kernel is complete when this is green.
 
 The kernel is the smallest thing that can do work: call an LLM, execute tools, maintain a ledger, and iterate until done. Everything we build here, we build using the proxy model — Claude reads the design doc (skill), writes tests first, implements to green, records findings.
 
@@ -816,7 +816,7 @@ Once the kernel boots, remaining milestones become work items in animus's own qu
 4. **M6** — awareness digest
 5. **M7** — child work items
 6. **M9a** — skill discovery
-7. **M5d** — engage hooks
+7. **M5d** — act hooks
 8. **M8** — code execution sandbox
 9. **M9b** — autopoietic skill creation
 

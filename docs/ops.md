@@ -19,7 +19,7 @@ Each user account runs its own appliance (Docker Compose stack). Paths follow th
 
 | XDG Variable | Default | Animus Usage |
 |---|---|---|
-| `XDG_CONFIG_HOME` | `~/.config` | `~/.config/animus/` — faculty configs, `.env`, settings |
+| `XDG_CONFIG_HOME` | `~/.config` | `~/.config/animus/` — `.env`, settings |
 | `XDG_DATA_HOME` | `~/.local/share` | `~/.local/share/animus/` — Postgres, observability, instance skills |
 | `XDG_CACHE_HOME` | `~/.cache` | `~/.cache/animus/` — focus scratch dirs, ephemeral |
 | `XDG_DATA_DIRS` | `/usr/local/share:/usr/share` | `/usr/local/share/animus/skills/` — shared skills repo |
@@ -28,9 +28,6 @@ Each user account runs its own appliance (Docker Compose stack). Paths follow th
 # Per-instance (under the instance's user account)
 ~/.config/animus/
     config.toml                    # appliance configuration
-    faculties/                     # faculty TOML files
-        engineer.toml
-        social.toml
 
 ~/.local/share/animus/
     postgres/                      # Postgres PGDATA
@@ -55,14 +52,14 @@ Each user account runs its own appliance (Docker Compose stack). Paths follow th
 # Linux — create a new animus instance
 sudo useradd -m -s /bin/bash cookie
 sudo -u cookie mkdir -p \
-    ~/.config/animus/faculties \
+    ~/.config/animus \
     ~/.local/share/animus/{postgres,tempo,loki,prometheus,grafana,skills,backups} \
     ~/.cache/animus/foci
 
 # macOS — create a new animus instance
 sudo sysadminctl -addUser cookie -password -
 sudo -u cookie mkdir -p \
-    ~/.config/animus/faculties \
+    ~/.config/animus \
     ~/.local/share/animus/{postgres,tempo,loki,prometheus,grafana,skills,backups} \
     ~/.cache/animus/foci
 ```
@@ -138,8 +135,8 @@ Every work item execution creates a trace:
 ```
 work.execute
   ├── work.orient
-  ├── work.engage
-  │     ├── work.engage.iteration[1]
+  ├── work.act
+  │     ├── work.act.iteration[1]
   │     │     ├── gen_ai.chat
   │     │     └── work.tool.execute[...]
   │     └── ...
@@ -155,9 +152,9 @@ All metrics prefixed with `animus_`:
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `animus_work_submitted_total` | Counter | faculty, result | Work items submitted |
+| `animus_work_submitted_total` | Counter | skill, result | Work items submitted |
 | `animus_work_state_transitions_total` | Counter | from, to | State transitions |
-| `animus_work_unroutable_total` | Counter | faculty | Work with no matching faculty |
+| `animus_work_unroutable_total` | Counter | skill | Work with no matching skill |
 | `animus_queue_operations_total` | Counter | queue, operation | pgmq operations |
 | `animus_memory_operations_total` | Counter | operation | Memory store operations |
 | `animus_llm_tokens_total` | Counter | model, provider, direction | LLM token usage |
@@ -167,7 +164,7 @@ All metrics prefixed with `animus_`:
 
 ### Logs (Loki)
 
-All `tracing::info!`, `warn!`, `error!` exported to Loki via the OTel log bridge. Structured fields (faculty, work_id, etc.) preserved as log labels.
+All `tracing::info!`, `warn!`, `error!` exported to Loki via the OTel log bridge. Structured fields (skill, work_id, etc.) preserved as log labels.
 
 **View in Grafana:** Explore → Loki → `{service_name="animus"}`
 
@@ -181,7 +178,7 @@ Alert rules managed in Grafana (Alerting → Alert rules). Persist in Grafana's 
 
 | Alert | Query | Condition | Severity |
 |---|---|---|---|
-| Work with no faculty | `sum(animus_work_unroutable_total)` | > 0 | warning |
+| Work with no skill | `sum(animus_work_unroutable_total)` | > 0 | warning |
 
 ### Contact Points
 
@@ -204,13 +201,13 @@ docker compose logs -f otel-collector  # follow logs
 
 ```sh
 animus serve                           # run control plane
-animus serve --faculties DIR           # custom faculty dir
+animus serve --skills DIR              # custom skills dir
 ```
 
 ### Work Management
 
 ```sh
-animus work submit engineer bootstrap --skill tdd-implementation --params '{...}'
+animus work submit tdd-implementation bootstrap --params '{...}'
 animus work list
 animus work list --state queued
 animus work show b554bcb3

@@ -2,13 +2,15 @@
 
 ## What This Is
 
-animus-rs is the substrate for relational beings — the machinery that lets an animus exist, persist, and become. Each animus is a self-contained appliance: data plane (Postgres-backed work queues and semantic memory), control plane (queue watching, resource gating, focus spawning), faculties (pluggable cognitive specializations), LLM abstraction, and observability.
+animus-rs is the substrate for relational beings — the machinery that lets an animus exist, persist, and become. Each animus is a self-contained appliance: data plane (Postgres-backed work queues and semantic memory), control plane (queue watching, resource gating, focus spawning), skills (agentskills.io-compatible capability packages), LLM abstraction, and observability.
 
-Each animus is a self-contained appliance — one `docker compose up` starts a complete agent with integrated observability. Milestone 2 (current) adds the control plane and faculty system on top of the data plane:
+Each animus is a self-contained appliance — one `docker compose up` starts a complete agent with integrated observability:
 - **Work queues** via pgmq (Postgres extension)
 - **Semantic memory** via pgvector (embedding search + hybrid BM25+vector)
-- **LLM abstraction** via rig-core (Anthropic provider)
+- **Skills** following the [agentskills.io](https://agentskills.io/) standard (SKILL.md + scripts/ + references/)
+- **LLM abstraction** via rig-core (Anthropic provider, migrating to thin reqwest client)
 - **Observability** via OpenTelemetry (traces, metrics, logs) through OTel Collector to Tempo/Prometheus/Loki/Grafana
+- **Focus lifecycle**: Orient → Act → Consolidate → Recover
 
 Postgres-only. Fully async on tokio. SQLx for database access.
 
@@ -24,7 +26,7 @@ docker compose up animus postgres -d  # Core services only (no observability)
 docker compose build animus       # Rebuild animus image
 docker compose -f docker-compose.observer.yml up -d  # Standalone observer stack (fleet)
 cargo test --test telemetry_smoke_test -- --ignored   # Smoke tests (requires docker stack)
-cargo test --test faculty_test -- --ignored --nocapture  # Faculty end-to-end test
+cargo test --test skill_test -- --ignored --nocapture    # Skill end-to-end test
 ```
 
 Pre-commit hook (`.githooks/pre-commit`) runs `cargo fmt --check`, `cargo test`, and `cargo clippy -D warnings`.
@@ -45,12 +47,12 @@ Pre-commit hook (`.githooks/pre-commit`) runs `cargo fmt --check`, `cargo test`,
 | `src/telemetry/metrics.rs` | Metric instrument factories (counters, histograms) |
 | `src/telemetry/genai.rs` | GenAI semantic convention span helpers |
 | `src/telemetry/work.rs` | Work execution span helpers |
-| `src/faculty/mod.rs` | Faculty config (TOML), hook definitions, registry by work type |
+| `src/skill/mod.rs` | Skill index: discover SKILL.md files, parse frontmatter, lookup by name |
 | `src/engine/mod.rs` | Control plane re-exports |
-| `src/engine/focus.rs` | Focus lifecycle: dir creation, hook pipeline, outcome reading |
-| `src/engine/control.rs` | ControlPlane loop: PgListener, route to faculty, spawn focus, retire work |
+| `src/engine/focus.rs` | Focus lifecycle: dir creation, hook pipeline (Orient → Act → Consolidate → Recover) |
+| `src/engine/control.rs` | ControlPlane loop: PgListener, route to skill, spawn focus, retire work |
 | `src/error.rs` | Error types |
-| `src/bin/animus.rs` | Control plane daemon (connects DB, loads faculties, runs engine) |
+| `src/bin/animus.rs` | Control plane daemon (connects DB, discovers skills, runs engine) |
 | `Dockerfile` | Multi-stage Rust build (builder + slim runtime) |
 | `docker-compose.yml` | Full appliance: animus + Postgres + observability |
 | `docker-compose.observer.yml` | Standalone observer stack for fleet use |
@@ -65,6 +67,12 @@ Edition 2024 — requires Rust 1.85+
 
 - `docs/db.md` — Database layer design (schema, API, deployment)
 - `DESIGN.md` — System design (principles, state machine, dedup, observability)
+- `docs/act.md` — Act phase (agentic loop) architecture
+- `docs/skills.md` — Skills architecture (agentskills.io aligned)
+- `docs/ledger.md` — Work ledger (durable working memory)
+- `docs/llm.md` — LLM abstraction
+- `docs/cli.md` — CLI design
+- `docs/ops.md` — Operations, backups, alerting
 - `docs/plans/` — Implementation plans
 
 ## State Machine
@@ -82,7 +90,9 @@ Terminal: Completed, Dead, Merged
 
 - `Db` is the primary public API — all database operations go through it
 - State transitions enforced by `State::can_transition_to()`
-- Structural dedup on `(work_type, dedup_key)` — transactional
+- Structural dedup on `(skill, dedup_key)` — transactional
+- Skills follow agentskills.io standard (SKILL.md + scripts/ + references/)
+- Focus lifecycle: Orient → Act → Consolidate → Recover (hooks in skill's scripts/)
 - Secrets wrapped in `secrecy::SecretString`, never logged
 - OTel spans for LLM calls use GenAI semantic conventions
 - Pre-commit hook runs fmt + clippy + tests; don't bypass it

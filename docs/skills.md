@@ -2,189 +2,218 @@
 status: active
 milestone: M9
 spec: PLAN.md § Milestone 9
+standard: agentskills.io/specification
 code: null
 ---
 
 # Skills Architecture
 
-*Progressive discovery, runtime activation, and autopoietic evolution of agent capabilities.*
+*The sole mechanism for agent capabilities: discovery, activation, autopoietic evolution.*
 
 ## Context
 
-The engage loop design (`docs/engage.md`) defines five mechanisms for how a focus executes work: bounded sub-contexts, parallel tool execution, child work items, the awareness digest, and the code execution sandbox. The ledger design (`docs/ledger.md`) defines durable working memory. The faculty TOML defines a static tool set.
+Skills are the sole mechanism for structuring what an animus can do. A skill is a self-contained package of methodology, hooks, and resources that the control plane discovers and executes.
 
-But real agents need more than intrinsic tools. A Social faculty checking in with Kelly needs relationship context, communication preferences, draft templates. A Computer Use faculty analyzing a codebase needs language-specific patterns, framework conventions, review checklists. These aren't tools — they're *knowledge packaged as capabilities*.
+The act phase design (`docs/act.md`) defines the agentic loop -- how a focus reasons, calls tools, and iterates. The ledger design (`docs/ledger.md`) defines durable working memory. Skills define *what the agent knows how to do* and *how it does it*.
 
-Skills are how faculties acquire new capabilities — both at design time (humans author skills) and at runtime (the agent discovers, activates, and creates skills). They bridge the gap between the fixed tool set in faculty TOML and the open-ended nature of real work.
+Every work item names a skill. The control plane looks up that skill, runs its hook pipeline (Orient, Act, Consolidate, Recover), and retires the work item. One concept, one dispatch path, one package format.
 
-## Prior Art
+Skills follow the [agentskills.io specification](https://agentskills.io/specification) -- a portable open standard for agent capabilities. animus-rs skills are compatible with any agent that reads `SKILL.md` files. The hooks and operational metadata are animus-specific extensions that other agents would ignore.
 
-### Claude Code Skills
+---
 
-YAML frontmatter + markdown body. Progressive disclosure: the agent sees a one-liner in the catalog, decides to read more, and the full content provides detailed instructions, scripts, and resources. The agent can create and modify its own skills. This model prioritizes runtime knowledge acquisition and autopoiesis.
+## agentskills.io Alignment
 
-### MicroClaw Skills
+The [agentskills.io specification](https://agentskills.io/specification) defines the base format:
 
-Similar to Claude Code. Skills are directories discovered from a skills path, activated via a tool call. Activation injects prompt context and optionally loads `.env` files for tool configuration. A `SkillManager` handles discovery and activation.
+- **Required**: `SKILL.md` with YAML frontmatter (`name`, `description`) and markdown body
+- **Optional directories**: `scripts/`, `references/`, `assets/`
+- **Progressive disclosure**: metadata at startup, instructions on activation, resources on demand
+- **Naming**: lowercase alphanumeric + hyphens, 1-64 chars, must match directory name
+- **Optional fields**: `license`, `compatibility`, `metadata`, `allowed-tools`
 
-### Nanoclaw/Nanorepo Architecture
-
-Skills as composable code modifications. A skill literally modifies the system — adds files, changes source code, adds dependencies. Three-way git merge with structured conflict resolution. Intent is first-class: every modified file has a `.intent.md` with machine-readable headings (what the skill adds, invariants, must-keep sections). Tests run after every operation. State tracked for deterministic replay.
-
-Key nanoclaw principles relevant to animus-rs:
-- **Intent is first-class and structured** — not just documentation, but a contract
-- **One skill, one happy path** — the reasonable default for 80% of cases
-- **Skills layer via dependencies** — extension skills build on base skills
-- **Always tested** — tests after apply, update, uninstall, replay
-- **Customization via patching** — users apply the default, then customize
-
-### Synthesis
-
-Claude Code and MicroClaw show that runtime skill discovery and activation work well — agents are good at deciding which skills are relevant and incorporating their guidance. Nanoclaw shows that skills can be composable modifications managed entirely through git — three-way merge, intent documentation, deterministic replay.
-
-animus-rs adopts the **nanorepo model for skill management**: skills live in git repos, compose via git merge, and evolve through commits. Two tiers — a shared base repo (curated, PR-gated) and per-instance repos (autopoietic, local). The git infrastructure provides versioning, rollback, diff, promotion, and conflict resolution for free. No custom state tracking needed.
+animus-rs extends the standard through the `metadata` field for operational properties and through convention-based hook discovery in `scripts/`. These extensions are invisible to other agents -- they see a valid agentskills.io skill and use the parts they understand.
 
 ---
 
 ## Three Levels of Skills
 
-Skills in animus-rs operate at three levels, each building on the one below:
+Skills operate at three levels, each building on the one below:
 
 ### Level 1: Runtime Skills (Discovery and Activation)
 
-Skills that augment a focus's capabilities during the engage loop. The skill provides prompt context, instructions, reference data, and optionally scripts. The agent discovers relevant skills, activates them, and their content becomes part of the engage context.
+Skills that augment a focus during the act phase. The skill provides methodology (SKILL.md body), reference data, and optionally scripts. The agent discovers relevant skills, activates them, and their content becomes part of the act context.
 
-This is the primary skill interaction for most work. A faculty doesn't need to know every skill at configuration time — it discovers what it needs based on the work at hand.
+This is the primary skill interaction. The control plane dispatches to a skill based on the work item's `skill` field. Additional skills can be discovered and activated during the act phase to supplement the primary skill.
 
 ### Level 2: Autopoietic Skills (Creation and Evolution)
 
-Skills that the agent creates from its own experience. Recurring patterns, relationship knowledge, domain expertise, debugging strategies — anything the agent learns that would be useful in future work. The consolidate hook is the natural place for skill creation, using ledger entries as raw material.
+Skills the agent creates from its own experience. Recurring patterns, relationship knowledge, domain expertise, debugging strategies -- anything the agent learns that would be useful in future work. The consolidate hook is the natural place for skill creation, using ledger entries as raw material.
 
 This is how the being learns and grows. A finding recorded in one focus becomes a skill available to all future foci.
 
 ### Level 3: System Skills (Infrastructure Modification)
 
-Skills that modify the animus-rs system itself — adding tools, faculties, hooks, channel adapters. These use nanoclaw-style composable code modifications with git three-way merge, intent documentation, and mandatory testing.
+Skills that modify the animus-rs system itself -- adding tools, hooks, channel adapters. These use nanoclaw-style composable code modifications with git three-way merge, intent documentation, and mandatory testing.
 
-This is the most ambitious level and the longest path to implementation. The architecture accommodates it, but Levels 1 and 2 come first.
+This is the most ambitious level and the longest path to implementation. Levels 1 and 2 come first.
 
 ---
 
 ## Skill Package Structure
 
+Following the [agentskills.io specification](https://agentskills.io/specification) with animus-specific conventions:
+
 ```
-skills/
-  {skill-name}/
-    SKILL.md              # YAML frontmatter + progressive disclosure body
-    prompt.md             # optional: detailed prompt context injected on activation
-    scripts/              # optional: callable from code execution sandbox
-      analyze.py
-      draft.py
-    resources/            # optional: reference data, templates, examples
-      preferences.md
-      template.md
-    tests/                # optional: validation tests
-      test_skill.py
-    manifest.yaml         # optional: for system-level skills (Level 3)
-    add/                  # optional: new files for system skills
-    modify/               # optional: modified files + intent docs for system skills
+skills/{skill-name}/
+  SKILL.md              # Required. YAML frontmatter + markdown methodology.
+  scripts/              # Optional. Hook scripts discovered by convention.
+    orient.sh           #   Prepare context before the act phase.
+    consolidate.sh      #   Process results after the act phase.
+    recover.sh          #   Handle failures.
+    analyze.py          #   Skill-specific scripts callable from sandbox.
+  prompt/               # Optional. Sub-prompts for LLM calls within hooks.
+    classify.md
+    summarize.md
+  references/           # Optional. Reference docs loaded on demand.
+    communication-styles.md
+    checklist.md
+  assets/               # Optional. Templates, schemas, static resources.
+    template.md
+    config.yaml
 ```
 
-Only `SKILL.md` is required. Everything else is progressive — added as the skill grows in sophistication.
+Only `SKILL.md` is required. Everything else is progressive -- added as the skill grows in sophistication.
+
+### Convention-Based Hook Discovery
+
+The control plane discovers hooks by looking for specific filenames in `scripts/`:
+
+| File | Phase | Purpose |
+|------|-------|---------|
+| `scripts/orient.sh` | Orient | Prepare context before the act phase |
+| `scripts/consolidate.sh` | Consolidate | Process results, extract learnings |
+| `scripts/recover.sh` | Recover | Handle failures, retry logic |
+
+No metadata declaration needed. If the file exists and is executable, it runs during that phase. If not, the phase is skipped. The act phase always runs -- it is the agentic loop itself, driven by the SKILL.md methodology.
+
+Focus lifecycle: **Orient -> Act -> Consolidate -> Recover**
+
+```
+Orient        scripts/orient.sh exists?  → run it (context assembly)
+              scripts/orient.sh missing? → skip, proceed to act
+Act           always runs — agentic loop with SKILL.md as methodology
+Consolidate   scripts/consolidate.sh exists?  → run it (extract learnings)
+              scripts/consolidate.sh missing? → skip
+Recover       only on failure — scripts/recover.sh exists? → run it
+              scripts/recover.sh missing? → default retry/dead-letter
+```
 
 ---
 
 ## SKILL.md Format
 
-The skill's primary file uses YAML frontmatter for machine-readable metadata and a markdown body for progressive disclosure.
-
-### Frontmatter
+Standard agentskills.io frontmatter with animus-specific `metadata`:
 
 ```yaml
 ---
-name: check-in-with-person
+name: engage
 description: >
-  Guides relational check-ins — timing, tone, context gathering,
-  memory integration, and follow-up scheduling.
-triggers:
-  faculties: ["engage", "check-in", "respond"]
-  keywords: ["check in", "catch up", "reach out", "follow up"]
-  params:                           # match against work item params
-    person: "*"                     # any value for "person" param triggers
-faculties: ["social", "heartbeat"]  # which faculties can use this skill
-tools_needed: ["memory-search", "send-message", "calendar"]
-auto_activate: true                 # activate when triggers match (vs. manual)
-created_by: animus                  # "animus" (autopoietic) or "human"
-created_from: work_item:abc123      # optional: source work item for autopoietic skills
-version: 3
-updated_at: 2026-02-28
-depends: []                         # other skills this one builds on
-conflicts: []                       # skills that can't be active simultaneously
+  Relational presence and social interaction. Guides check-ins,
+  conversations, and relationship maintenance with warmth and context.
+metadata:
+  concurrent: "true"
+  isolation: "none"
+  max-concurrent: "5"
+  recover-max-attempts: "2"
+  author: "human"
+  version: "1"
 ---
 ```
 
+### Required Fields
+
+| Field | Constraints |
+|-------|------------|
+| `name` | 1-64 chars. Lowercase alphanumeric + hyphens. Must match directory name. |
+| `description` | 1-1024 chars. What the skill does and when to use it. |
+
+### Optional Standard Fields
+
+| Field | Purpose |
+|-------|---------|
+| `license` | License name or reference to bundled file |
+| `compatibility` | Environment requirements (e.g., "Requires git, docker") |
+| `metadata` | Arbitrary key-value map for operational and custom properties |
+| `allowed-tools` | Space-delimited pre-approved tools (experimental) |
+
+### Operational Metadata (animus-specific)
+
+These live in the `metadata` field to stay within the agentskills.io spec:
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `concurrent` | `"false"` | Can multiple foci run this skill in parallel? |
+| `isolation` | `"none"` | Isolation mode: `none`, `worktree`, `container` |
+| `max-concurrent` | `"1"` | Max parallel foci for this skill |
+| `recover-max-attempts` | `"3"` | Retries before dead-letter |
+| `author` | `"human"` | `"human"` or `"animus"` (autopoietic) |
+| `version` | `"1"` | Bumped on each autopoietic update |
+
 ### Body (Progressive Disclosure)
 
-The body is structured for three levels of reading depth:
+The markdown body follows the agentskills.io progressive disclosure model:
 
-```markdown
-# Check-In With Person
+1. **Metadata** (~100 tokens): `name` and `description` loaded at startup for all skills
+2. **Instructions** (<5000 tokens recommended): full SKILL.md body loaded when the skill is activated
+3. **Resources** (as needed): scripts, references, assets loaded on demand
 
-Brief description for the skills catalog. The agent reads this far during
-discovery — one or two sentences that help it decide whether to activate.
+Recommended body structure: a brief overview paragraph, "When to Use" (activation guidance), "Instructions" (step-by-step methodology), and references to scripts and resources. Keep SKILL.md under 500 lines; move detailed material to `references/`.
 
-## When to Use
+---
 
-Activate this skill when the work involves checking in with a specific person
-you have a relationship with. Not for cold outreach or transactional messages.
+## The Engage Skill (Reference Implementation)
 
-## Instructions
+`skills/engage/` is the first skill built under this architecture -- social interaction and relational presence.
 
-### Context Gathering
+Ported from v1 (`~/animus/agent/engage/`), it demonstrates the full skill package:
 
-Before reaching out, use `memory-search` to find:
-- Recent interactions with this person (last 2 weeks)
-- Known preferences (timing, topics, communication style)
-- Any pending items, commitments, or follow-ups
-- Recent findings from other faculties involving this person
+- **SKILL.md**: Relational presence methodology
+- **scripts/orient.sh**: Multi-stage context assembly (classify, extract tasks, formulate queries, recall memories, assemble context, write to ledger)
+- **scripts/consolidate.sh**: Result processing (check satisfaction, extract initiatives, detect episode boundary, form episode, log exchange, queue follow-ups)
+- **scripts/recover.sh**: Retry/dead-letter logic
+- **prompt/*.md**: Sub-prompts for LLM calls within hooks
 
-Check the awareness digest — another faculty may have recently interacted
-with this person or learned something relevant.
+This skill demonstrates the full pattern: methodology in SKILL.md, hooks in scripts/, sub-prompts in prompt/. A single directory contains everything the control plane needs to run the work.
 
-### Composing the Check-In
+---
 
-[Detailed guidance on tone, structure, personalization...]
+## Work Item Dispatch
 
-### Follow-Up
+Work items name their skill directly:
 
-After sending, use `ledger_append(finding)` to record:
-- What you learned from the interaction
-- Any commitments made
-- Suggested timing for next check-in
-
-Consider using `schedule_task` to queue the next check-in.
-
-## Scripts
-
-`scripts/draft-check-in.py` — generates a draft message given relationship
-context. Callable from the code execution sandbox:
-
-```python
-from skills.check_in_with_person.scripts.draft import draft_check_in
-draft = draft_check_in(person="Kelly", context=context, tone="warm")
+```rust
+NewWorkItem {
+    skill: "engage",              // required -- which skill handles this
+    dedup_key: Some("kelly-checkin-2026-03-02"),
+    params: json!({
+        "person": "Kelly",
+        "type": "check-in"
+    }),
+    source: "heartbeat",
+    ..
+}
 ```
 
-## Resources
+The control plane dispatches:
 
-`resources/communication-styles.md` — reference on adapting tone and timing
-to different relationship types.
-```
+1. Read `skill` from the work item
+2. Look up the skill in the `SkillIndex` (two-tier search: instance then shared)
+3. Read operational metadata from SKILL.md frontmatter
+4. Run the hook pipeline: Orient -> Act -> Consolidate (-> Recover on failure)
+5. Retire the work item
 
-**Level 1** (catalog): The agent reads the frontmatter `description` field. One line in the catalog.
-
-**Level 2** (activation decision): The agent reads through "When to Use". Enough to decide whether to activate.
-
-**Level 3** (full incorporation): The agent reads the full body. Instructions, scripts, resources become part of its working context.
+If the skill is not found in the index, the work item stays queued (visibility timeout returns it for retry). The `animus.work.unroutable` metric fires with label `skill`.
 
 ---
 
@@ -192,28 +221,20 @@ to different relationship types.
 
 ### Skill Discovery and Activation Tools
 
-Three engine tools, always available (like ledger tools):
+Three engine tools, always available during the act phase:
 
 #### `discover_skills`
 
 ```json
 {
   "name": "discover_skills",
-  "description": "Search available skills. Returns frontmatter only (name, description, triggers). Use this to find skills relevant to your current work.",
+  "description": "Search available skills. Returns frontmatter only (name, description). Use this to find skills relevant to your current work.",
   "input_schema": {
     "type": "object",
     "properties": {
       "query": {
         "type": "string",
-        "description": "Natural language query or keywords to match against skill descriptions and triggers."
-      },
-      "faculty": {
-        "type": "string",
-        "description": "Optional: filter to skills that trigger on this work type."
-      },
-      "faculty": {
-        "type": "string",
-        "description": "Optional: filter to skills available to this faculty."
+        "description": "Natural language query or keywords to match against skill descriptions."
       }
     }
   }
@@ -224,9 +245,9 @@ Returns a concise listing:
 
 ```
 Available skills matching "check in":
-  [1] check-in-with-person — Guides relational check-ins (auto-activate: on)
+  [1] engage — Relational presence and social interaction (auto-activate: on)
   [2] follow-up-scheduler — Manages follow-up timing and reminders
-  [3] kelly-relationship — Context for interactions with Kelly (created by: animus)
+  [3] kelly-relationship — Context for interactions with Kelly (author: animus)
 ```
 
 #### `activate_skill`
@@ -234,7 +255,7 @@ Available skills matching "check in":
 ```json
 {
   "name": "activate_skill",
-  "description": "Activate a skill for the current focus. Loads its full prompt context, makes its scripts available in the code execution sandbox, and registers its resources. Use after discovering a relevant skill.",
+  "description": "Activate a supplementary skill for the current focus. Loads its full instructions, makes its scripts available, and registers its resources.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -249,70 +270,62 @@ Available skills matching "check in":
 ```
 
 On activation:
-1. Read the full `SKILL.md` body and `prompt.md` (if present)
-2. Inject the skill's prompt context into the engage loop (appended to the system prompt or as a context message)
-3. Register the skill's `scripts/` directory as importable in the code execution sandbox
-4. Make the skill's `resources/` files accessible via `read_file`
-5. Record activation in the focus's engine state (for OTel tracing)
+
+1. Read the full SKILL.md body
+2. Inject the skill's instructions into the act phase context
+3. Register the skill's `scripts/` directory as importable in the sandbox
+4. Make the skill's `references/` and `assets/` accessible via `read_file`
+5. Record activation in the focus state (for OTel tracing)
 
 #### `create_skill`
 
 ```json
 {
   "name": "create_skill",
-  "description": "Create a new skill from what you've learned. Encodes patterns, knowledge, or procedures as a reusable skill for future foci. The skill will be discoverable by all faculties listed in the frontmatter.",
+  "description": "Create a new skill from what you've learned. Encodes patterns, knowledge, or procedures as a reusable skill for future foci.",
   "input_schema": {
     "type": "object",
     "properties": {
       "name": {
         "type": "string",
-        "description": "Skill name (kebab-case). Used as the directory name."
+        "description": "Skill name (kebab-case, 1-64 chars). Used as the directory name."
       },
       "description": {
         "type": "string",
-        "description": "Brief description for the skills catalog."
-      },
-      "faculties": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "Which faculties can use this skill."
-      },
-      "triggers": {
-        "type": "object",
-        "description": "Optional: faculties, keywords, and params that auto-activate this skill."
+        "description": "Brief description for the skills catalog (max 1024 chars)."
       },
       "content": {
         "type": "string",
         "description": "The skill body (markdown). Instructions, context, guidance."
+      },
+      "metadata": {
+        "type": "object",
+        "description": "Optional operational metadata (concurrent, isolation, etc.)."
       }
     },
-    "required": ["name", "description", "faculties", "content"]
+    "required": ["name", "description", "content"]
   }
 }
 ```
 
-The engine writes the `SKILL.md` file with generated frontmatter and the provided content. The skill is immediately discoverable by future foci.
+The engine writes the SKILL.md file with generated frontmatter and the provided content. The skill is immediately discoverable by future foci.
 
 ### Auto-Activation During Orient
 
-During the orient phase, the engine can automatically discover and pre-activate skills:
+During the orient phase, the engine can automatically discover and pre-activate supplementary skills:
 
-1. Read `faculty` and `params` from the work item
-2. Scan all `SKILL.md` frontmatter for matching `triggers`:
-   - `faculties` match against the work item's `faculty`
-   - `keywords` match against the work item's description/params
-   - `params` match against specific work item parameter keys/values
-3. Filter by `faculties` — only skills available to the current faculty
-4. For skills with `auto_activate: true`, activate them (inject prompt context)
-5. For all remaining skills, include them in the catalog section of the system prompt
+1. Read `skill` and `params` from the work item
+2. Scan all SKILL.md frontmatter for keyword matches against the work item's description and params
+3. For skills with auto-activate triggers, activate them (inject into act context)
+4. For remaining matches, include them in the catalog section of the system prompt
 
-The agent can still manually discover and activate additional skills during the engage loop. Auto-activation is a convenience for common patterns, not a constraint.
+The agent can still manually discover and activate additional skills during the act phase.
 
-```toml
-[faculty.orient]
-command = "scripts/social-orient"
-auto_activate_skills = true       # default: true
-max_auto_activated = 5            # prevent prompt bloat from too many skills
+```yaml
+# In the primary skill's metadata
+metadata:
+  auto-activate-skills: "true"     # default: true
+  max-auto-activated: "5"          # prevent prompt bloat
 ```
 
 ---
@@ -321,7 +334,7 @@ max_auto_activated = 5            # prevent prompt bloat from too many skills
 
 ### Creation: From Findings to Skills
 
-The consolidate hook is the natural place for skill creation. After a focus completes, the consolidate hook queries the ledger for findings that might be worth encoding:
+The consolidate hook is the natural place for skill creation. After a focus completes, the consolidate hook queries the ledger for findings worth encoding:
 
 ```sql
 -- Findings from this focus
@@ -330,13 +343,13 @@ WHERE work_item_id = $1 AND entry_type = 'finding'
 ORDER BY seq;
 
 -- Similar findings from recent foci (pattern detection)
-SELECT w.faculty, wl.content, count(*) as occurrences
+SELECT w.skill, wl.content, count(*) as occurrences
 FROM work_ledger wl
 JOIN work_items w ON w.id = wl.work_item_id
 WHERE wl.entry_type = 'finding'
     AND wl.created_at > now() - interval '7 days'
     AND wl.content ILIKE '%' || $pattern || '%'
-GROUP BY w.faculty, wl.content
+GROUP BY w.skill, wl.content
 HAVING count(*) >= 3
 ORDER BY occurrences DESC;
 ```
@@ -345,42 +358,22 @@ When a pattern appears across multiple foci (e.g., "Kelly prefers morning messag
 
 ```
 Consolidate detects: 3 findings about Kelly's preferences
-  → Checks: does skills/kelly-relationship/ exist?
-  → No: creates it with the accumulated findings
-  → Yes: updates resources/preferences.md with new findings
+  -> Checks: does skills/kelly-relationship/ exist?
+  -> No: creates it with the accumulated findings
+  -> Yes: updates references/preferences.md with new findings
 ```
 
 ### Evolution: Skills Improve Over Time
 
-Autopoietic skills have a `version` field and `updated_at` timestamp. Each consolidate pass that updates a skill bumps the version. The skill's content accumulates knowledge:
-
-```
-v1: "Kelly prefers morning messages"
-v2: "Kelly prefers morning messages, always asks about the cat"
-v3: "Kelly prefers morning messages (before 10am), always asks about the cat,
-     interested in Rust, suggested a writing project"
-```
-
-The skill doesn't just grow — it can also be refined. If the agent discovers that a previous finding was wrong ("Kelly actually prefers evening messages now"), the consolidate hook updates the skill accordingly.
+Autopoietic skills have a `version` in metadata and evolve through commits. Each consolidate pass that updates a skill bumps the version. Skills do not just accumulate -- they can also be refined when the agent discovers a previous finding was wrong.
 
 ### Provenance Tracking
 
-Autopoietic skills track their origin:
-
-```yaml
-created_by: animus
-created_from: work_item:abc123
-creation_findings:
-  - "Kelly prefers morning messages" (work_item:abc123, seq:7)
-  - "Kelly always asks about the cat" (work_item:def456, seq:12)
-  - "Kelly interested in Rust" (work_item:ghi789, seq:4)
-```
-
-This provenance chain — from ledger finding to skill content — is auditable. You can trace exactly which work produced which knowledge.
+Autopoietic skills track their origin via `metadata.author: "animus"` and `metadata.created-from` in SKILL.md, plus detailed records in the Postgres provenance table (see Skill Provenance Table below). The full chain -- from ledger finding to skill content -- is auditable.
 
 ### Retirement
 
-Skills can become stale. A relationship skill for someone the agent hasn't interacted with in months. A debugging skill for a framework version that's been upgraded. The engine can track skill activation frequency:
+Skills can become stale. The engine tracks skill activation frequency:
 
 ```sql
 -- Skills that haven't been activated in 30 days
@@ -389,152 +382,100 @@ FROM skill_activations
 WHERE last_activated_at < now() - interval '30 days';
 ```
 
-Stale skills aren't deleted — they're flagged. The agent (or a human) can archive them. A Heartbeat faculty reflection could review stale skills as part of periodic self-maintenance.
+Stale skills are not deleted -- they are flagged. The agent (or a human) can archive them. A periodic heartbeat work item could review stale skills as part of self-maintenance.
 
 ---
 
-## Skills in the Engage Loop
+## Skills in the Act Phase
 
 ### System Prompt Integration
 
-The engage loop's system prompt includes a skills section (after the existing Working Memory and Execution Modes sections):
+The act phase system prompt includes a skills section (after the Working Memory section):
 
 ```
 ## Skills
 
-You have access to skills — packaged knowledge and capabilities that extend
-your tools. Some skills have been auto-activated based on your current work
-and are available below. You can discover additional skills with `discover_skills`
-and activate them with `activate_skill`.
+You have access to skills -- packaged knowledge and capabilities that extend
+your core tools. Skills provide domain expertise, relationship context,
+procedural guidance, and callable scripts.
+
+Some skills have been auto-activated based on your current work -- their
+guidance appears below. You can discover more with `discover_skills` and
+activate them with `activate_skill`.
+
+When you learn something that would be useful in future work -- a pattern,
+a preference, a procedure -- consider using `create_skill` to encode it.
+Future foci will be able to discover and use what you learned.
 
 ### Active Skills
 
-[Auto-activated skill prompt contexts are injected here]
+{auto_activated_skill_contexts}
 
-### Available Skills (not yet activated)
+### Available Skills
 
-- follow-up-scheduler — Manages follow-up timing and reminders
-- conversation-starters — Context-appropriate opening lines
-- mood-detection — Guidance on reading emotional tone in messages
+{skill_catalog_one_liners}
 ```
 
 ### Skill Context and Compaction
 
-Activated skill prompt context is injected into the system prompt, not into the message history. This means:
-
-- Skill context survives bounded sub-context compaction (system prompt is never truncated)
-- Skill context doesn't grow with iterations — it's fixed-size
-- Multiple skills compose by concatenation in the system prompt
-
-If skill context grows too large (too many activated skills), the engine enforces `max_auto_activated` and warns the agent that it should deactivate skills it no longer needs:
-
-```
-[engine] You have 7 active skills consuming significant prompt context.
-Consider deactivating skills that are no longer relevant to your current step.
-```
-
-### Skills in the Code Execution Sandbox
-
-When `code_execution = true` and a skill has a `scripts/` directory, those scripts are importable in the sandbox:
-
-```python
-# Inside execute_code — activated skill scripts are available
-from skills.check_in_with_person.scripts.draft import draft_check_in
-from skills.kelly_relationship.resources import preferences
-
-context = memory_search("Kelly recent interactions")
-prefs = read_file(preferences.path)
-draft = draft_check_in(person="Kelly", context=context, preferences=prefs)
-return f"Draft check-in:\n{draft}"
-```
-
-Skill scripts run inside the same sandbox container with the same security model. They can call the tool SDK functions. They are subject to the same resource limits and timeout.
-
----
-
-## Skills and the Awareness Digest
-
-The awareness digest (`docs/engage.md` § 4) surfaces recent findings across all foci. Skills add another dimension: the digest can also surface recently created or updated skills.
-
-```
-== AWARENESS ==
-
-Currently active:
-- [Social/engage] Checking in with Kelly
-  ...
-
-Recently completed:
-- ...
-
-Recent findings:
-- Kelly mentioned interest in Rust (Heartbeat/reflect, 5h ago)
-- ...
-
-Skills updated:
-- kelly-relationship v3 (updated by Social/consolidate, 2h ago)
-  Added: "suggested a writing project"
-- codebase-review-checklist v1 (created by Computer Use/consolidate, 6h ago)
-  New skill for code review patterns
-```
-
-This means the awareness digest not only shows what happened (work items and findings) but also what was *learned* (skills created and evolved). The being's growth is visible to all its faculties.
+Activated skill context is injected into the system prompt, not the message history. This means skill context survives bounded sub-context compaction, is fixed-size, and composes by concatenation. If total context grows too large, the engine enforces `max-auto-activated` and warns the agent to deactivate irrelevant skills.
 
 ---
 
 ## Skill Storage: Two-Tier Nanorepo Model
 
-Skills are managed entirely through git. Two tiers, each a git repository:
+Skills are managed through git. Two tiers, each a git repository:
 
 ### Shared Skills Repo (Base)
 
 ```
-/usr/local/share/animus/skills/                     # cloned from GitHub (e.g., animus-skills)
-  tdd-implementation/                 # curated methodology skill
+/usr/local/share/animus/skills/           # cloned from GitHub
+  engage/                                  # social interaction (reference skill)
     SKILL.md
     scripts/
-    tests/
+    prompt/
+    references/
+  engineer/                                # software engineering methodology
+    SKILL.md
+    scripts/
   systematic-debugging/
     SKILL.md
-  check-in-with-person/
-    SKILL.md
-    resources/
   code-review/
     SKILL.md
 ```
 
 - Cloned from a shared GitHub repo (e.g., `github.com/witt3rd/animus-skills`)
-- **PR-gated** — changes require review and approval
+- **PR-gated** -- changes require review and approval
 - `git pull` updates all instances
-- Ships with the base methodology skills: `tdd-implementation`, `systematic-debugging`, `code-review`, etc.
-- These are the skills that bootstrap the animus-rs project itself
+- Ships with base methodology skills: `engage`, `engineer`, `systematic-debugging`, `code-review`
 
 ### Instance Skills Repo (Applied + Autopoietic)
 
 ```
-$XDG_DATA_HOME/animus/skills/     # local git repo, per-instance
-  kelly-relationship/                 # autopoietic — learned by this instance
+$XDG_DATA_HOME/animus/skills/              # local git repo, per-instance
+  kelly-relationship/                       # autopoietic -- learned by this instance
     SKILL.md
-    resources/preferences.md
-  codebase-review-checklist/          # autopoietic — learned from code review patterns
+    references/preferences.md
+  codebase-review-checklist/                # autopoietic -- learned from code review
     SKILL.md
 ```
 
 - A local git repo initialized per instance
 - Autopoietic skills are committed here by the consolidate hook
 - Git provides: version history, diff, rollback, blame
-- **Optional** remote: can be pushed to GitHub for backup or sharing, but doesn't have to be
+- **Optional** remote: can be pushed to GitHub for backup or sharing
 - Tracks the shared repo as upstream (for merge)
 
 ### Resolution Order
 
-The engage loop searches both tiers, instance first:
+The control plane searches both tiers, instance first:
 
 ```
-1. $XDG_DATA_HOME/animus/skills/   ← instance-specific (overrides shared)
-2. /usr/local/share/animus/skills/                    ← shared base (curated)
+1. $XDG_DATA_HOME/animus/skills/     <- instance-specific (overrides shared)
+2. /usr/local/share/animus/skills/   <- shared base (curated)
 ```
 
-Instance skills take precedence. If the instance has customized `tdd-implementation` (e.g., learned that this codebase needs a specific test pattern), its version is used instead of the shared one.
+Instance skills take precedence. If the instance has customized `engineer` (e.g., learned that this codebase needs a specific test pattern), its version is used instead of the shared one.
 
 ### Composition via Git Merge
 
@@ -544,22 +485,7 @@ When the shared repo updates and the instance has local customizations, standard
 - **Theirs**: the updated shared skill
 - **Ours**: the instance's customization
 
-For most skills (separate directories, no overlapping files), merges are trivial. For skills the instance has modified, the `.intent.md` in each skill guides conflict resolution:
-
-```markdown
-<!-- tdd-implementation/.intent.md -->
-## What this skill does
-Guides TDD workflow: read spec, write tests, red, implement, green, record steps.
-
-## Invariants
-- Tests MUST be written before implementation
-- Each step MUST be recorded in the ledger
-
-## Customizable sections
-- Test framework preferences
-- Language-specific patterns
-- Step granularity
-```
+For most skills (separate directories, no overlapping files), merges are trivial.
 
 ### Promotion Path
 
@@ -567,25 +493,17 @@ When an autopoietic skill proves valuable:
 
 ```
 Instance creates skill (autopoietic, local commit)
-  → Skill used successfully across multiple foci
-  → Human reviews: "this is good enough for everyone"
-  → PR from instance repo → shared repo
-  → Review gate, tests pass
-  → Merged into shared base
-  → All instances get it on next `git pull`
+  -> Skill used successfully across multiple foci
+  -> Human reviews: "this is good enough for everyone"
+  -> PR from instance repo -> shared repo
+  -> Review gate, tests pass
+  -> Merged into shared base
+  -> All instances get it on next `git pull`
 ```
 
-This is nanoclaw's skill extraction pattern: local customizations that prove themselves get promoted to the shared base.
+### Why Git
 
-### Why Git, Not a Custom System
-
-- **Versioning**: every skill change is a commit with author, timestamp, message
-- **Rollback**: `git revert` if an autopoietic skill learns something wrong
-- **Diff**: see exactly what changed between skill versions
-- **Merge**: three-way merge handles shared/instance composition
-- **Backup**: shared repo on GitHub, instance repo optionally pushed
-- **Replay**: clone the repos on a fresh machine, exact same skill set
-- **No custom state tracking**: git IS the state
+Versioning, rollback (`git revert`), diff, three-way merge, backup (push to remote), and deterministic replay -- all for free. No custom state tracking needed. Git IS the state.
 
 ### Skill Activation Index (Postgres)
 
@@ -597,7 +515,6 @@ CREATE TABLE skill_activations (
     skill_name      TEXT NOT NULL,
     skill_tier      TEXT NOT NULL,      -- 'shared' or 'instance'
     work_item_id    UUID REFERENCES work_items(id),
-    faculty         TEXT NOT NULL,
     activated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     activation_type TEXT NOT NULL        -- 'auto' or 'manual'
 );
@@ -606,7 +523,7 @@ CREATE INDEX idx_skill_activations_skill ON skill_activations(skill_name, activa
 CREATE INDEX idx_skill_activations_work_item ON skill_activations(work_item_id);
 ```
 
-This tracks which skills are used, how often, by which faculty, from which tier. Stale skill detection, activation analytics, and the awareness digest's "skills updated" section all query this table.
+This tracks which skills are used, how often, from which tier. Stale skill detection, activation analytics, and the awareness digest's "skills updated" section all query this table.
 
 ### Skill Provenance Table (Postgres)
 
@@ -627,65 +544,21 @@ CREATE TABLE skill_provenance (
 CREATE INDEX idx_skill_provenance_skill ON skill_provenance(skill_name, skill_version);
 ```
 
-The audit trail for autopoietic learning: which work produced which knowledge, and how that knowledge became a skill. Combined with git history, you can trace from a specific ledger finding → skill creation commit → every subsequent activation of that skill.
+The audit trail for autopoietic learning: which work produced which knowledge, and how that knowledge became a skill.
 
 ---
 
 ## Configuration
 
-### Global Skills Configuration
-
 ```toml
 [skills]
-shared_dir = "/usr/local/share/animus/skills"   # shared skills repo (XDG_DATA_DIRS path)
-instance_dir = "skills"                        # relative to instance data_dir
-auto_discovery = true                          # scan for skills at startup
-hot_reload = true                              # watch for skill changes during runtime
-max_skill_prompt_tokens = 4000                 # max tokens from all active skill prompts combined
-```
-
-### Per-Faculty Configuration
-
-```toml
-[faculty.engage]
-# ... existing fields ...
-auto_activate_skills = true         # orient auto-activates matching skills
-max_auto_activated = 5              # limit auto-activated skills per focus
-
-[faculty.consolidate]
-# ... existing fields ...
-skill_creation = true               # consolidate hook can create/update skills
-skill_creation_threshold = 3        # minimum finding occurrences to trigger skill creation
-```
-
----
-
-## System Prompt Addition
-
-Added to the engine's prompt template (after the Execution Modes section from `docs/engage.md`):
-
-```
-## Skills
-
-You have access to skills — packaged knowledge and capabilities that extend
-your core tools. Skills provide domain expertise, relationship context,
-procedural guidance, and callable scripts.
-
-Some skills have been auto-activated based on your current work — their
-guidance appears below. You can discover more with `discover_skills` and
-activate them with `activate_skill`.
-
-When you learn something that would be useful in future work — a pattern,
-a preference, a procedure — consider using `create_skill` to encode it.
-Future foci will be able to discover and use what you learned.
-
-### Active Skills
-
-{auto_activated_skill_contexts}
-
-### Available Skills
-
-{skill_catalog_one_liners}
+shared_dir = "/usr/local/share/animus/skills"   # shared skills repo
+instance_dir = "skills"                          # relative to $XDG_DATA_HOME/animus/
+auto_discovery = true                            # scan for skills at startup
+hot_reload = true                                # watch for skill changes during runtime
+max_skill_prompt_tokens = 4000                   # max tokens from all active skill prompts
+max_auto_activated = 5                           # limit auto-activated skills per focus
+skill_creation_threshold = 3                     # minimum finding occurrences for autopoietic creation
 ```
 
 ---
@@ -696,94 +569,65 @@ Future foci will be able to discover and use what you learned.
 
 ```
 work.execute
-  ├── work.orient
-  │     ├── work.awareness.digest
-  │     └── work.skills.auto_activate          (auto-activation during orient)
-  │           ├── work.skills.discover          (scan frontmatter for triggers)
-  │           ├── work.skills.activate[skill-a] (load and inject)
-  │           └── work.skills.activate[skill-b]
-  ├── work.engage
-  │     ├── work.engage.iteration[N]
-  │     │     ├── work.tool.execute[discover_skills]   (manual discovery)
-  │     │     ├── work.tool.execute[activate_skill]    (manual activation)
-  │     │     └── work.tool.execute[create_skill]      (autopoietic creation)
-  │     └── ...
-  └── work.consolidate
-        └── work.skills.consolidate_create      (consolidate-triggered skill creation)
+  +-- work.orient
+  |     +-- work.awareness.digest
+  |     +-- work.skills.auto_activate          (auto-activation during orient)
+  |           +-- work.skills.discover          (scan frontmatter for triggers)
+  |           +-- work.skills.activate[skill-a] (load and inject)
+  |           +-- work.skills.activate[skill-b]
+  +-- work.act
+  |     +-- work.act.iteration[N]
+  |     |     +-- work.tool.execute[discover_skills]   (manual discovery)
+  |     |     +-- work.tool.execute[activate_skill]    (manual activation)
+  |     |     +-- work.tool.execute[create_skill]      (autopoietic creation)
+  |     +-- ...
+  +-- work.consolidate
+        +-- work.skills.consolidate_create      (consolidate-triggered skill creation)
 ```
 
 ### Metrics
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `work.skills.activated` | Counter | faculty, skill, type (auto/manual) | Skill activations |
-| `work.skills.discovered` | Counter | faculty | Discovery queries |
-| `work.skills.created` | Counter | faculty, created_by (animus/human) | Skills created |
-| `work.skills.updated` | Counter | faculty, skill | Autopoietic skill updates |
-| `work.skills.prompt_tokens` | Histogram | faculty | Total tokens from active skill prompts |
-| `work.skills.stale` | Gauge | — | Skills not activated in 30 days |
+| `work.skills.activated` | Counter | skill, type (auto/manual) | Skill activations |
+| `work.skills.discovered` | Counter | skill | Discovery queries |
+| `work.skills.created` | Counter | skill, author (animus/human) | Skills created |
+| `work.skills.updated` | Counter | skill | Autopoietic skill updates |
+| `work.skills.prompt_tokens` | Histogram | skill | Total tokens from active skill prompts |
+| `work.skills.stale` | Gauge | -- | Skills not activated in 30 days |
 
 ---
 
 ## Interaction with Other Systems
 
-### Skills and the Ledger
+**Ledger**: The ledger feeds skill creation -- `finding` entries across multiple foci are raw material for autopoietic skills. The consolidate hook queries the ledger for recurring patterns. Skill provenance links back to specific ledger entries. Conversely, skills improve ledger quality by guiding the agent to record structured findings.
 
-The ledger feeds skill creation:
-- `finding` entries across multiple foci are the raw material for autopoietic skills
-- The consolidate hook queries the ledger for recurring patterns
-- Skill provenance links back to specific ledger entries
+**Awareness digest**: The digest surfaces recently created/updated skills, so all work sees what the system has *learned*, not just what it has done. Skills can also consume the digest -- instructions can reference it for cross-work context.
 
-Skills improve ledger quality:
-- An activated skill's instructions guide the agent to record better findings
-- A "check-in-with-person" skill that says "record preferences in your ledger" produces structured findings that are easier to turn into future skills
+**Code execution sandbox**: Activated skills with `scripts/` directories are importable in the sandbox. Scripts extend the sandbox beyond the core tool SDK for complex procedures, running with the same security model and resource limits.
 
-### Skills and the Awareness Digest
-
-The awareness digest surfaces skill evolution:
-- Recently created/updated skills appear in the digest
-- Every faculty sees what the system has learned, not just what it has done
-
-Skills consume the awareness digest:
-- A skill's instructions can reference the digest: "Check the awareness digest for recent interactions with this person from other faculties"
-
-### Skills and the Code Execution Sandbox
-
-Activated skills with `scripts/` directories are importable in the sandbox:
-- Skill scripts extend the sandbox's capabilities beyond the core tool SDK
-- Scripts can encode complex procedures (drafting messages, analyzing code, processing data)
-- Scripts run with the same security model and resource limits as other sandbox code
-
-### Skills and Child Work Items
-
-Child work items can activate different skills than their parent:
-- Parent (Social) activates `check-in-with-person` and `kelly-relationship`
-- Parent spawns child (Computer Use) with `faculty: "analyze"`
-- Child's orient auto-activates `analyze-codebase` — different skill set for different work
-- This is natural: different work types trigger different skills, and child work has its own work type
+**Child work items**: Child work items can name different skills than their parent. A parent using `engage` can spawn a child with `skill: "engineer"` -- different work, different skill, different auto-activated supplementary skills.
 
 ---
 
 ## Open Questions
 
-- **Skill size limits.** How large can a skill's prompt context be before it crowds out other context? The `max_skill_prompt_tokens` config caps total active skill prompt size, but individual skills could still be large. Should there be a per-skill limit? Or should the engine just warn when a skill is unusually large?
+- **Skill size limits.** How large can a skill's instructions be before they crowd out other context? The `max_skill_prompt_tokens` config caps total active skill prompt size, but individual skills could still be large. Per-skill limit, or just warn when a skill is unusually large?
 
-- **Skill versioning and rollback.** Autopoietic skills evolve as the agent learns. What if the agent learns something wrong and updates a skill with bad information? Git versioning of the skills directory provides rollback, but should the engine have explicit rollback support (e.g., `rollback_skill(name, version)`)? Or is this a human-intervention concern?
+- **Skill versioning and rollback.** Autopoietic skills evolve as the agent learns. What if the agent learns something wrong? Git versioning provides rollback, but should the engine have explicit rollback support (e.g., `rollback_skill(name, version)`)? Or is this a human-intervention concern?
 
-- **Skill testing for autopoietic skills.** Human-authored skills can include tests. But autopoietic skills are created by the agent — should the agent also write tests? This might be too ambitious for Level 2. Alternatively, the engine could validate autopoietic skills structurally (valid frontmatter, non-empty content, reasonable size) without requiring functional tests.
+- **Skill testing for autopoietic skills.** Human-authored skills can include tests. Autopoietic skills are created by the agent -- should the agent also write tests? Alternatively, the engine could validate structurally (valid frontmatter, non-empty content, reasonable size) without requiring functional tests.
 
-- **Skill sharing across animi.** Resolved: the shared skills repo (GitHub) is the sharing mechanism. Instance-specific skills can be promoted via PR. Identity question remains — should two animi have the same learned behaviors? Probably: shared methodology yes, shared relationship knowledge no.
+- **Skill sharing across animi.** The shared skills repo is the sharing mechanism. Instance-specific skills can be promoted via PR. Identity question: should two animi have the same learned behaviors? Shared methodology yes, shared relationship knowledge no.
 
-- **Skill deactivation.** Should the agent be able to deactivate a skill mid-focus? If it activated a skill that turned out to be irrelevant, the prompt context is wasted. A `deactivate_skill` tool would remove the skill's context from subsequent LLM calls. But modifying the system prompt mid-loop adds complexity. Simpler alternative: the agent just ignores the irrelevant skill, and the wasted tokens are acceptable.
+- **Skill deactivation mid-focus.** Should the agent deactivate a skill during the act phase? A `deactivate_skill` tool would remove context from subsequent LLM calls, but modifying the system prompt mid-loop adds complexity. Simpler: the agent ignores the irrelevant skill and the wasted tokens are acceptable.
 
-- **Conflict between auto-activated skills.** If two skills declare `conflicts: ["each-other"]` but both match the work item's triggers, which one wins? Options: higher version, more specific trigger match, alphabetical, or ask the agent to choose. Probably: don't auto-activate conflicting skills — include both in the catalog and let the agent decide.
+- **Conflict between auto-activated skills.** If two skills with conflicting guidance both match, which one wins? Probably: do not auto-activate conflicting skills -- include both in the catalog and let the agent decide.
 
-- **Skill dependency resolution.** If skill A `depends` on skill B, activating A should automatically activate B. This is straightforward for a flat dependency chain but could get complex with diamonds or version requirements. Keep it simple: flat dependencies only, no version constraints, error on circular dependencies.
+- **Skill dependency resolution.** If skill A depends on skill B, activating A should automatically activate B. Keep it simple: flat dependencies only, no version constraints, error on circular dependencies.
 
-- **Hybrid skills (Level 1.5).** Some skills are primarily runtime (prompt context) but also include a small system modification (register a custom tool). This is between Level 1 and Level 3. Should the engine support a `tools` section in the skill manifest that registers lightweight tools (e.g., a Python function exposed via the sandbox SDK) without full nanoclaw-style code modification?
-
-- **Shared repo bootstrap.** The shared skills repo starts with skills we write as part of animus-rs development (e.g., `tdd-implementation`). Should these live in the animus-rs repo during development and get extracted to a separate repo later? Or start as a separate repo from day one?
+- **prompt/ directory convention.** The `prompt/` directory for sub-prompts used by hook scripts is an animus-specific extension not in the agentskills.io spec. Should we propose it upstream, or keep it as a local convention?
 
 - **Instance repo initialization.** When a new instance starts, should it automatically `git init` the instance skills directory? Or wait until the first autopoietic skill is created? Probably: init on first `create_skill` call.
 
-- **Merge automation.** When the shared repo updates, should the instance automatically pull and merge? Or require human/agent intervention? Auto-pull with merge is safe for non-conflicting changes. Conflicts should pause and surface via the awareness digest or an alert.
+- **Merge automation.** When the shared repo updates, should the instance automatically pull and merge? Auto-pull with merge is safe for non-conflicting changes. Conflicts should pause and surface via the awareness digest.
