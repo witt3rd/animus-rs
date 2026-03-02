@@ -9,9 +9,71 @@ code: docker-compose.yml, docker/, src/telemetry/
 
 *Observability, backups, alerting, and operational runbook for the animus appliance.*
 
+## Instance Model
+
+Every animus instance is an OS user account. On Linux: `useradd cookie`. On macOS: `sysadminctl -addUser cookie`. The OS provides isolation — file permissions, process ownership, resource limits. No custom instance management.
+
+Each user account runs its own appliance (Docker Compose stack). Paths follow the XDG Base Directory Specification. The animus binary reads XDG paths for the current user — no `ANIMUS_HOME`, no `ANIMUS_INSTANCE`, no conditional logic.
+
+### XDG Directory Layout
+
+| XDG Variable | Default | Animus Usage |
+|---|---|---|
+| `XDG_CONFIG_HOME` | `~/.config` | `~/.config/animus/` — faculty configs, `.env`, settings |
+| `XDG_DATA_HOME` | `~/.local/share` | `~/.local/share/animus/` — Postgres, observability, instance skills |
+| `XDG_CACHE_HOME` | `~/.cache` | `~/.cache/animus/` — focus scratch dirs, ephemeral |
+| `XDG_DATA_DIRS` | `/usr/local/share:/usr/share` | `/usr/local/share/animus/skills/` — shared skills repo |
+
+```
+# Per-instance (under the instance's user account)
+~/.config/animus/
+    config.toml                    # appliance configuration
+    faculties/                     # faculty TOML files
+        engineer.toml
+        social.toml
+
+~/.local/share/animus/
+    postgres/                      # Postgres PGDATA
+    tempo/                         # trace storage
+    loki/                          # log storage
+    prometheus/                    # metric storage
+    grafana/                       # Grafana SQLite
+    skills/                        # instance skills repo (git)
+    backups/                       # pg_dump outputs
+
+~/.cache/animus/
+    foci/                          # ephemeral focus working directories
+
+# Shared across all instances (system-wide)
+/usr/local/share/animus/
+    skills/                        # shared skills repo (git, cloned from GitHub)
+```
+
+### Instance Setup
+
+```sh
+# Linux — create a new animus instance
+sudo useradd -m -s /bin/bash cookie
+sudo -u cookie mkdir -p \
+    ~/.config/animus/faculties \
+    ~/.local/share/animus/{postgres,tempo,loki,prometheus,grafana,skills,backups} \
+    ~/.cache/animus/foci
+
+# macOS — create a new animus instance
+sudo sysadminctl -addUser cookie -password -
+sudo -u cookie mkdir -p \
+    ~/.config/animus/faculties \
+    ~/.local/share/animus/{postgres,tempo,loki,prometheus,grafana,skills,backups} \
+    ~/.cache/animus/foci
+```
+
+The animus binary and Docker Compose file live in the repo (shared). Each instance user runs them with their own XDG paths.
+
+---
+
 ## Stack
 
-Every animus instance runs a full observability stack alongside the agent service:
+Every animus instance runs a full observability stack:
 
 ```
 animus-rs (daemon or CLI)
@@ -23,62 +85,37 @@ animus-rs (daemon or CLI)
     → Grafana (:3000) — unified UI
 ```
 
-| Service | Image | Internal Port | Host Port (dev) | Data Path |
-|---|---|---|---|---|
-| Postgres | custom (pgmq + pgvector) | 5432 | `ANIMUS_PG_PORT` (5432) | `{data}/postgres/` |
-| OTel Collector | `otel/opentelemetry-collector-contrib` | 4317, 4318 | `ANIMUS_OTEL_GRPC_PORT` (4317) | stateless |
-| Tempo | `grafana/tempo:2.7.2` | 3200 | none | `{data}/tempo/` |
-| Loki | `grafana/loki:latest` | 3100 | none | `{data}/loki/` |
-| Prometheus | `prom/prometheus:latest` | 9090 | none | `{data}/prometheus/` |
-| Grafana | `grafana/grafana:latest` | 3000 | `ANIMUS_GRAFANA_PORT` (3000) | `{data}/grafana/` |
+| Service | Image | Internal Port | Data Path |
+|---|---|---|---|
+| Postgres | custom (pgmq + pgvector) | 5432 | `$XDG_DATA_HOME/animus/postgres/` |
+| OTel Collector | `otel/opentelemetry-collector-contrib` | 4317, 4318 | stateless |
+| Tempo | `grafana/tempo:2.7.2` | 3200 | `$XDG_DATA_HOME/animus/tempo/` |
+| Loki | `grafana/loki:latest` | 3100 | `$XDG_DATA_HOME/animus/loki/` |
+| Prometheus | `prom/prometheus:latest` | 9090 | `$XDG_DATA_HOME/animus/prometheus/` |
+| Grafana | `grafana/grafana:latest` | 3000 | `$XDG_DATA_HOME/animus/grafana/` |
 
-Where `{data}` = `${ANIMUS_HOME}/data/${ANIMUS_INSTANCE}/` (default: `~/.animus/data/dev/`).
+Host port mappings are configurable via env vars to avoid conflicts when multiple instances run on the same machine.
+
+---
 
 ## Data Durability
 
-All persistent state lives on host-mounted volumes — not Docker-managed volumes. This means:
+All persistent state lives on host-mounted volumes under `$XDG_DATA_HOME/animus/`. This means:
 
-- **Time Machine / filesystem backups cover everything** — Postgres data, Grafana config, metrics, traces, logs
-- **`docker compose down` does not destroy data** — containers are ephemeral, data is on the host
-- **`docker compose down -v` is safe** — there are no Docker volumes to remove
-- **Multiple instances are isolated** — each instance has its own directory under `{ANIMUS_HOME}/data/`
+- **Filesystem backups cover everything** — Time Machine, rsync, restic, etc.
+- **`docker compose down` does not destroy data** — containers are ephemeral
+- **Per-user isolation** — each instance's data is owned by its OS user
+- **Standard tooling works** — `du`, `find`, `rsync`, `tar` — no Docker volume abstraction
 
-### Directory Layout
+### Backups
 
-```
-~/.animus/                          # ANIMUS_HOME
-  data/
-    dev/                            # ANIMUS_INSTANCE
-      postgres/                     # Postgres PGDATA (WAL, tables, indexes)
-      tempo/                        # Trace storage
-      loki/                         # Log storage (chunks, WAL, index)
-      prometheus/                   # Metric storage (TSDB)
-      grafana/                      # Grafana SQLite (dashboards, alerts, users)
-    kelly/                          # another instance
-      ...
-```
-
-## Backups
-
-### Postgres (Critical — Domain State)
-
-Postgres holds the source of truth: work items, queue messages, memories, the work ledger (future). This is the one thing that MUST be backed up.
-
-**Ad-hoc backup:**
+**Postgres (Critical — Domain State):**
 ```sh
-docker compose exec postgres pg_dump -U animus animus_dev > backup_$(date +%Y%m%d_%H%M%S).sql
-```
-
-**Automated daily backup (cron / launchd / systemd timer):**
-```sh
-#!/bin/bash
-BACKUP_DIR="${ANIMUS_HOME:-$HOME/.animus}/backups/${ANIMUS_INSTANCE:-dev}"
-mkdir -p "$BACKUP_DIR"
 docker compose exec -T postgres pg_dump -U animus animus_dev \
-  > "$BACKUP_DIR/animus_$(date +%Y%m%d_%H%M%S).sql"
+  > "$XDG_DATA_HOME/animus/backups/animus_$(date +%Y%m%d_%H%M%S).sql"
 
 # 30-day retention
-find "$BACKUP_DIR" -name "animus_*.sql" -mtime +30 -delete
+find "$XDG_DATA_HOME/animus/backups" -name "animus_*.sql" -mtime +30 -delete
 ```
 
 **Restore:**
@@ -86,21 +123,11 @@ find "$BACKUP_DIR" -name "animus_*.sql" -mtime +30 -delete
 docker compose exec -T postgres psql -U animus animus_dev < backup_file.sql
 ```
 
-### Observability Data (Important — Not Critical)
+**Observability data:** covered by filesystem backups. Prometheus retains 30 days, Loki retains 30 days. If lost, domain state is unaffected.
 
-Tempo, Loki, Prometheus data is valuable for debugging and auditing but can be regenerated by re-running the agent. If lost, you lose historical telemetry but not domain state.
+**Skills:** git repos — push to remote for backup, or covered by filesystem backups.
 
-These are covered automatically if `~/.animus/data/` is on a backed-up filesystem (Time Machine, rsync, etc.).
-
-**Prometheus retention:** configured at 30 days (`--storage.tsdb.retention.time=30d`).
-**Loki retention:** configured at 30 days (`limits_config.retention_period: 30d`).
-**Tempo retention:** not explicitly configured — defaults vary by version.
-
-### Grafana State (Convenient — Recreatable)
-
-Grafana's SQLite holds dashboards, alert rules, contact points, and user preferences. If lost, dashboards and alerts need to be recreated. Datasources are provisioned from YAML and auto-restore.
-
-Covered by filesystem backups of `{data}/grafana/`.
+---
 
 ## Three-Signal Telemetry
 
@@ -122,13 +149,9 @@ work.execute
 
 **View in Grafana:** Explore → Tempo → Search by `service.name = animus`
 
-Trace attributes follow GenAI semantic conventions:
-- `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.provider.name`
-- `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`
-
 ### Metrics (Prometheus)
 
-All metrics are prefixed with `animus_`:
+All metrics prefixed with `animus_`:
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
@@ -144,17 +167,15 @@ All metrics are prefixed with `animus_`:
 
 ### Logs (Loki)
 
-All `tracing::info!`, `warn!`, `error!` calls are exported to Loki via the OTel log bridge. Structured fields (faculty, work_id, etc.) are preserved as log labels.
+All `tracing::info!`, `warn!`, `error!` exported to Loki via the OTel log bridge. Structured fields (faculty, work_id, etc.) preserved as log labels.
 
 **View in Grafana:** Explore → Loki → `{service_name="animus"}`
 
-Filter by level: `{service_name="animus"} |= "WARN"`
-
-Logs include trace IDs — click through from a log line to the corresponding trace in Tempo.
+---
 
 ## Alerting
 
-Alert rules are managed in Grafana (Alerting → Alert rules). They persist in Grafana's SQLite at `{data}/grafana/grafana.db`.
+Alert rules managed in Grafana (Alerting → Alert rules). Persist in Grafana's SQLite.
 
 ### Current Alert Rules
 
@@ -162,35 +183,11 @@ Alert rules are managed in Grafana (Alerting → Alert rules). They persist in G
 |---|---|---|---|
 | Work with no faculty | `sum(animus_work_unroutable_total)` | > 0 | warning |
 
-### Creating Alert Rules
+### Contact Points
 
-Via Grafana UI: Alerting → Alert rules → New alert rule.
-Via API:
-```sh
-curl -X POST http://localhost:3000/api/v1/provisioning/alert-rules \
-  -H "Content-Type: application/json" \
-  -d '{ ... }'
-```
+Grafana → Alerting → Contact points. Supports Slack, PagerDuty, Email, Discord, webhooks. Route by label: `severity=warning` → Slack, `severity=critical` → PagerDuty.
 
-### Contact Points (Future)
-
-Alerts currently show in the Grafana UI only. To receive notifications:
-
-1. **Grafana → Alerting → Contact points → Add contact point**
-2. Choose integration: Slack, PagerDuty, Email, Discord, webhook, etc.
-3. **Grafana → Alerting → Notification policies**
-4. Route by label: `severity=warning` → Slack, `severity=critical` → PagerDuty
-
-Contact point configuration persists in Grafana's SQLite — no code changes needed.
-
-### Planned Alert Rules
-
-| Alert | When to Add | Query | Severity |
-|---|---|---|---|
-| Focus failure rate | M5a (engage loop) | `rate(animus_work_state_transitions_total{to="failed"}[5m]) > 0.5` | critical |
-| High LLM token usage | M3 (LLM client) | `rate(animus_llm_tokens_total[1h]) > threshold` | warning |
-| Queue depth growing | Now (already possible) | `delta(animus_queue_operations_total{operation="send"}[1h]) - delta(animus_queue_operations_total{operation="archive"}[1h]) > 10` | warning |
-| Emergency summarizations | M5c (compaction) | `animus_work_context_emergency_summarizations_total > 0` | warning |
+---
 
 ## Operational Commands
 
@@ -198,22 +195,22 @@ Contact point configuration persists in Grafana's SQLite — no code changes nee
 
 ```sh
 docker compose up -d                   # start all services
-docker compose down                    # stop all services (data preserved)
-docker compose restart grafana         # restart a single service
-docker compose logs -f otel-collector  # follow logs for a service
+docker compose down                    # stop (data preserved)
+docker compose restart grafana         # restart one service
+docker compose logs -f otel-collector  # follow logs
 ```
 
 ### Daemon
 
 ```sh
-cargo run --bin animus -- serve                  # run control plane
-cargo run --bin animus -- serve --faculties DIR   # custom faculty dir
+animus serve                           # run control plane
+animus serve --faculties DIR           # custom faculty dir
 ```
 
-### Work Management (CLI)
+### Work Management
 
 ```sh
-animus work submit implement bootstrap --dedup-key "milestone=M4" --params '{...}'
+animus work submit engineer bootstrap --skill tdd-implementation --params '{...}'
 animus work list
 animus work list --state queued
 animus work show b554bcb3
@@ -222,65 +219,48 @@ animus work show b554bcb3
 ### Database
 
 ```sh
-# Connect to Postgres
 docker compose exec postgres psql -U animus animus_dev
-
-# Check tables
 docker compose exec postgres psql -U animus animus_dev -c "\dt"
-
-# Count work items by state
 docker compose exec postgres psql -U animus animus_dev -c "
   SELECT state, count(*) FROM work_items GROUP BY state ORDER BY count DESC;
 "
-
-# Run migrations
-cargo run --bin animus -- serve  # migrations run on startup
-# or manually:
-# cargo sqlx migrate run
 ```
 
-### Health Checks
-
-```sh
-# Postgres
-docker compose exec postgres pg_isready -U animus
-
-# Grafana
-curl -s http://localhost:3000/api/health | python3 -m json.tool
-
-# OTel Collector (check it's listening)
-curl -s http://localhost:4318/v1/traces -X POST -d '{}' 2>&1 | head -1
-
-# Prometheus (check targets)
-# In Grafana: Explore → Prometheus → up
-```
+---
 
 ## Multi-Instance
 
-Multiple animus instances can run on the same machine:
+Each instance is an OS user account. Multiple instances on one machine:
 
 ```sh
-# Instance 1 (default)
-ANIMUS_INSTANCE=dev docker compose up -d
+# Run as user 'cookie'
+sudo -u cookie docker compose up -d
 
-# Instance 2 (different ports, different data)
-ANIMUS_INSTANCE=kelly ANIMUS_PG_PORT=5433 ANIMUS_GRAFANA_PORT=3001 \
-  COMPOSE_PROJECT_NAME=animus-kelly docker compose up -d
+# Run as user 'dev' (your dev instance)
+docker compose up -d
 ```
 
-Each instance gets:
-- Its own Docker network (via `COMPOSE_PROJECT_NAME`)
-- Its own data directory (`~/.animus/data/{instance}/`)
-- Its own port mappings (no conflicts)
+Port conflicts are avoided by configuring per-user port offsets:
+
+| Env Var | Description |
+|---|---|
+| `ANIMUS_PG_PORT` | Host port for Postgres (default: 5432) |
+| `ANIMUS_GRAFANA_PORT` | Host port for Grafana (default: 3000) |
+| `ANIMUS_OTEL_GRPC_PORT` | Host port for OTel gRPC (default: 4317) |
+| `ANIMUS_OTEL_HTTP_PORT` | Host port for OTel HTTP (default: 4318) |
+
+Each user's `.config/animus/` contains their port configuration. Docker Compose reads `$XDG_CONFIG_HOME/animus/.env` for these.
+
+---
 
 ## Configuration Reference
 
 | Env Var | Default | Description |
 |---|---|---|
-| `ANIMUS_HOME` | `~/.animus` | Data root directory |
-| `ANIMUS_INSTANCE` | `dev` | Instance name |
-| `COMPOSE_PROJECT_NAME` | `animus-dev` | Docker project name |
-| `DATABASE_URL` | `postgres://animus:animus_dev@localhost:5432/animus_dev` | Postgres connection (host) |
+| `XDG_CONFIG_HOME` | `~/.config` | Config root (XDG standard) |
+| `XDG_DATA_HOME` | `~/.local/share` | Data root (XDG standard) |
+| `XDG_CACHE_HOME` | `~/.cache` | Cache root (XDG standard) |
+| `DATABASE_URL` | `postgres://animus:animus_dev@localhost:5432/animus_dev` | Postgres connection |
 | `OTEL_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint |
 | `LOG_LEVEL` | `info` | Tracing filter level |
 | `ANTHROPIC_API_KEY` | — | LLM API key (secret) |

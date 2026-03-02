@@ -488,7 +488,7 @@ Skills are managed entirely through git. Two tiers, each a git repository:
 ### Shared Skills Repo (Base)
 
 ```
-~/.animus/skills/                     # cloned from GitHub (e.g., animus-skills)
+/usr/local/share/animus/skills/                     # cloned from GitHub (e.g., animus-skills)
   tdd-implementation/                 # curated methodology skill
     SKILL.md
     scripts/
@@ -511,7 +511,7 @@ Skills are managed entirely through git. Two tiers, each a git repository:
 ### Instance Skills Repo (Applied + Autopoietic)
 
 ```
-~/.animus/data/{instance}/skills/     # local git repo, per-instance
+$XDG_DATA_HOME/animus/skills/     # local git repo, per-instance
   kelly-relationship/                 # autopoietic — learned by this instance
     SKILL.md
     resources/preferences.md
@@ -530,8 +530,8 @@ Skills are managed entirely through git. Two tiers, each a git repository:
 The engage loop searches both tiers, instance first:
 
 ```
-1. ~/.animus/data/{instance}/skills/   ← instance-specific (overrides shared)
-2. ~/.animus/skills/                    ← shared base (curated)
+1. $XDG_DATA_HOME/animus/skills/   ← instance-specific (overrides shared)
+2. /usr/local/share/animus/skills/                    ← shared base (curated)
 ```
 
 Instance skills take precedence. If the instance has customized `tdd-implementation` (e.g., learned that this codebase needs a specific test pattern), its version is used instead of the shared one.
@@ -637,7 +637,7 @@ The audit trail for autopoietic learning: which work produced which knowledge, a
 
 ```toml
 [skills]
-shared_dir = "~/.animus/skills"                # shared skills repo (cloned from GitHub)
+shared_dir = "/usr/local/share/animus/skills"   # shared skills repo (XDG_DATA_DIRS path)
 instance_dir = "skills"                        # relative to instance data_dir
 auto_discovery = true                          # scan for skills at startup
 hot_reload = true                              # watch for skill changes during runtime

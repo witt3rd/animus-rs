@@ -1,19 +1,15 @@
 # Animus Appliance
 #
+# Each animus instance is an OS user account. Paths follow XDG:
+#   Config:  $XDG_CONFIG_HOME/animus/  (default: ~/.config/animus/)
+#   Data:    $XDG_DATA_HOME/animus/    (default: ~/.local/share/animus/)
+#
 # Usage:
-#   docker compose up -d                          # start (default instance: dev)
-#   ANIMUS_INSTANCE=kelly docker compose up -d    # named instance
+#   docker compose up -d              # start as current user
+#   sudo -u cookie docker compose up -d  # start as instance 'cookie'
 #
-# Data lives at: ${ANIMUS_HOME}/data/${ANIMUS_INSTANCE}/
-# Default: ~/.animus/data/dev/
-#
-# Port mappings controlled via env vars (set to empty to disable):
-#   ANIMUS_PG_PORT=5432         (default: 5432, for cargo test from host)
-#   ANIMUS_GRAFANA_PORT=3000    (default: 3000, for browser access)
-#   ANIMUS_OTEL_GRPC_PORT=4317  (default: 4317, for host OTel export)
-#   ANIMUS_OTEL_HTTP_PORT=4318  (default: 4318)
-#
-# Multiple instances: use different ports or disable host mappings.
+# Port mappings configurable per-instance to avoid conflicts:
+#   ANIMUS_PG_PORT, ANIMUS_GRAFANA_PORT, ANIMUS_OTEL_GRPC_PORT, ANIMUS_OTEL_HTTP_PORT
 
 services:
   postgres:
@@ -25,7 +21,7 @@ services:
     ports:
       - "${ANIMUS_PG_PORT:-5432}:5432"
     volumes:
-      - ${ANIMUS_HOME:-~/.animus}/data/${ANIMUS_INSTANCE:-dev}/postgres:/var/lib/postgresql/data
+      - ${XDG_DATA_HOME:-~/.local/share}/animus/postgres:/var/lib/postgresql/data
       - ./docker/init-extensions.sql:/docker-entrypoint-initdb.d/01-extensions.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U animus"]
@@ -39,14 +35,14 @@ services:
     command: ["-config.file=/etc/tempo/tempo.yml"]
     volumes:
       - ./docker/tempo.yml:/etc/tempo/tempo.yml
-      - ${ANIMUS_HOME:-~/.animus}/data/${ANIMUS_INSTANCE:-dev}/tempo:/var/tempo
+      - ${XDG_DATA_HOME:-~/.local/share}/animus/tempo:/var/tempo
 
   loki:
     image: grafana/loki:latest
     command: ["-config.file=/etc/loki/loki.yml"]
     volumes:
       - ./docker/loki.yml:/etc/loki/loki.yml
-      - ${ANIMUS_HOME:-~/.animus}/data/${ANIMUS_INSTANCE:-dev}/loki:/loki
+      - ${XDG_DATA_HOME:-~/.local/share}/animus/loki:/loki
 
   prometheus:
     image: prom/prometheus:latest
@@ -57,7 +53,7 @@ services:
       - "--storage.tsdb.retention.time=30d"
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ${ANIMUS_HOME:-~/.animus}/data/${ANIMUS_INSTANCE:-dev}/prometheus:/prometheus
+      - ${XDG_DATA_HOME:-~/.local/share}/animus/prometheus:/prometheus
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
@@ -76,7 +72,7 @@ services:
     image: grafana/grafana:latest
     volumes:
       - ./docker/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
-      - ${ANIMUS_HOME:-~/.animus}/data/${ANIMUS_INSTANCE:-dev}/grafana:/var/lib/grafana
+      - ${XDG_DATA_HOME:-~/.local/share}/animus/grafana:/var/lib/grafana
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_AUTH_ANONYMOUS_ENABLED: "true"
