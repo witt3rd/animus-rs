@@ -20,6 +20,7 @@
 //! [`CompletionClient`]: rig::client::CompletionClient
 
 pub mod error;
+pub mod types;
 
 use secrecy::{ExposeSecret, SecretString};
 
