@@ -8,20 +8,73 @@ pub struct SseEvent {
 }
 
 /// Incremental SSE parser.
+///
+/// Buffers incoming bytes and emits complete events as they arrive.
+/// An event is considered complete when an empty line (`\n\n`) is encountered.
 pub struct SseParser {
-    _buffer: String,
+    buffer: String,
+}
+
+impl Default for SseParser {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SseParser {
     pub fn new() -> Self {
         Self {
-            _buffer: String::new(),
+            buffer: String::new(),
         }
     }
 
-    pub fn feed(&mut self, _chunk: &str) -> Vec<SseEvent> {
-        // Stub: returns empty vec so tests compile but fail assertions
-        Vec::new()
+    /// Feed a chunk of SSE text. Returns any complete events found.
+    ///
+    /// Partial data is buffered until a blank line terminates an event block.
+    pub fn feed(&mut self, chunk: &str) -> Vec<SseEvent> {
+        self.buffer.push_str(chunk);
+        let mut events = Vec::new();
+
+        // Split on double-newline boundaries (event terminators).
+        while let Some(pos) = self.buffer.find("\n\n") {
+            let block = self.buffer[..pos].to_string();
+            self.buffer = self.buffer[pos + 2..].to_string();
+
+            // Skip empty blocks (extra blank lines between events).
+            if block.trim().is_empty() {
+                continue;
+            }
+
+            let mut event_type: Option<String> = None;
+            let mut data_lines: Vec<String> = Vec::new();
+
+            for line in block.split('\n') {
+                // Skip comment lines (start with ':').
+                if line.starts_with(':') {
+                    continue;
+                }
+
+                if let Some(value) = line.strip_prefix("event: ") {
+                    event_type = Some(value.to_string());
+                } else if let Some(value) = line.strip_prefix("event:") {
+                    event_type = Some(value.to_string());
+                } else if let Some(value) = line.strip_prefix("data: ") {
+                    data_lines.push(value.to_string());
+                } else if let Some(value) = line.strip_prefix("data:") {
+                    data_lines.push(value.to_string());
+                }
+                // Ignore other field names (id:, retry:, etc.)
+            }
+
+            if !data_lines.is_empty() {
+                events.push(SseEvent {
+                    event_type,
+                    data: data_lines.join("\n"),
+                });
+            }
+        }
+
+        events
     }
 }
 
