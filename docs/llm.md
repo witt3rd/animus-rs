@@ -5,6 +5,11 @@ spec: PLAN.md § Milestone 3
 code: null
 ---
 
+> **Current scope (2026-03-02):** Only the OpenAI-compatible provider is implemented.
+> All providers (OpenAI, xAI, OpenRouter, Groq, Ollama, DeepSeek) use the same
+> `OpenAiClient` with different base URLs. Anthropic Messages API provider deferred.
+> See `docs/plans/2026-03-02-llm-thin-client-design.md` for the decision record.
+
 # LLM Abstraction Design
 
 *Thin, provider-specific HTTP clients for LLM completion calls. No framework, no agent runtime, no batteries.*
