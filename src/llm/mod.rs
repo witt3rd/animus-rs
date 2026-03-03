@@ -20,6 +20,7 @@
 //! [`CompletionClient`]: rig::client::CompletionClient
 
 pub mod error;
+pub mod openai;
 pub mod sse;
 pub mod types;
 
