@@ -1,7 +1,7 @@
 //! Database connection pool, migrations, and health check.
 //!
 //! Shared Postgres connection pool used by both direct SQLx queries
-//! and rig-postgres VectorStoreIndex.
+//! and pgvector for embedding search.
 
 pub mod pgmq;
 pub mod work;

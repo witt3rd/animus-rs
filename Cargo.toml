@@ -25,10 +25,6 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
-# LLM + Embeddings (Rig) — rig-core retained for embeddings (pgvector via rig-postgres)
-rig-core = "0.31"
-rig-postgres = "0.1"
-
 # LLM — thin provider clients
 reqwest = { version = "0.12", features = ["json", "stream"] }
 async-trait = "0.1"
