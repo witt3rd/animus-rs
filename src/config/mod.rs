@@ -6,13 +6,14 @@
 pub mod secrets;
 
 use crate::error::{Error, Result};
+use crate::llm::LlmConfig;
 use secrecy::SecretString;
 
 #[derive(Debug)]
 pub struct Config {
     pub database_url: SecretString,
-    /// Anthropic API key — optional until a faculty actually needs LLM access.
-    pub anthropic_api_key: Option<SecretString>,
+    /// LLM configuration — optional until a skill actually needs LLM access.
+    pub llm: Option<LlmConfig>,
     pub otel_endpoint: Option<String>,
     pub log_level: String,
 }
@@ -23,11 +24,31 @@ impl Config {
     /// In local dev, call `dotenvy::dotenv().ok()` before this.
     /// In production, systemd EnvironmentFile provides the vars.
     pub fn from_env() -> Result<Self> {
+        let llm = match std::env::var("LLM_PROVIDER").ok() {
+            Some(provider) => {
+                let api_key = SecretString::from(required_var("LLM_API_KEY")?);
+                let model = required_var("LLM_MODEL")?;
+                Some(LlmConfig {
+                    provider,
+                    api_key,
+                    base_url: std::env::var("LLM_BASE_URL").ok(),
+                    model,
+                    max_tokens: std::env::var("LLM_MAX_TOKENS")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(8192),
+                    max_retries: std::env::var("LLM_MAX_RETRIES")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(3),
+                })
+            }
+            None => None,
+        };
+
         Ok(Self {
             database_url: SecretString::from(required_var("DATABASE_URL")?),
-            anthropic_api_key: std::env::var("ANTHROPIC_API_KEY")
-                .ok()
-                .map(SecretString::from),
+            llm,
             otel_endpoint: std::env::var("OTEL_ENDPOINT").ok(),
             log_level: std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
         })
