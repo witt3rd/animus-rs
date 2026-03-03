@@ -19,6 +19,8 @@
 //! [`SecretString`]: secrecy::SecretString
 //! [`CompletionClient`]: rig::client::CompletionClient
 
+pub mod error;
+
 use secrecy::{ExposeSecret, SecretString};
 
 /// Create an Anthropic client from a secret API key.
