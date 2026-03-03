@@ -42,7 +42,8 @@ Following the [agentskills.io specification](https://agentskills.io/specificatio
 
 ```
 skills/{skill-name}/
-  SKILL.md              # Required. YAML frontmatter + markdown methodology.
+  SKILL.md              # Required. General-purpose methodology (agentskills.io standard).
+  ACT.md                # Optional. Agent-specific instructions read by the act loop.
   scripts/              # Optional. Hook scripts discovered by convention.
     orient.sh           #   Prepare context before the act phase.
     consolidate.sh      #   Process results after the act phase.
@@ -50,6 +51,36 @@ skills/{skill-name}/
   prompt/               # Optional. Sub-prompts for LLM calls within hooks.
   references/           # Optional. Reference docs loaded on demand.
   assets/               # Optional. Templates, schemas, static resources.
+```
+
+### Two Files: SKILL.md vs ACT.md
+
+**`SKILL.md`** — general-purpose methodology, agentskills.io compatible. Any agent can discover and activate this skill. Contains methodology, principles, and guidelines that are useful across contexts. This is what other agents read when they discover this skill.
+
+**`ACT.md`** — agent-specific instructions read by the act phase when this skill is targeted by a work item. This is the agent's soul — the complete instructions for how to handle this kind of work. Only read when a work item says `skill: "this-skill"`.
+
+Act loop resolution:
+1. If `ACT.md` exists → read it (this is an agent skill with specific behavior)
+2. If no `ACT.md` → read `SKILL.md` (general-purpose skill used as primary)
+
+Discovery by other agents: always reads `SKILL.md`, never `ACT.md`.
+
+**Examples:**
+
+```
+skills/engage/              # Agent skill (has ACT.md + hooks)
+  SKILL.md                  # "How to be present in conversation" (any agent)
+  ACT.md                    # The soul — emotional grounding, presence methodology
+  scripts/orient.sh         # Multi-stage context assembly pipeline
+  scripts/consolidate.sh    # Result processing, initiative extraction
+  prompt/*.md               # Sub-prompts for hook LLM calls
+
+skills/tdd-implementation/  # Could be either
+  SKILL.md                  # TDD methodology (general-purpose)
+  ACT.md                    # Optional: full agent instructions for TDD work
+
+skills/systematic-debugging/ # Pure general-purpose (no ACT.md, no hooks)
+  SKILL.md                   # Debugging methodology any agent can activate
 ```
 
 ### SKILL.md Format
@@ -71,8 +102,7 @@ metadata:
 
 # Skill Name
 
-Methodology instructions that the act phase reads and follows.
-The act phase (agentic loop) loads this as its primary guidance.
+General-purpose methodology. Any agent can discover and use this.
 ```
 
 ### Hook Discovery
@@ -85,7 +115,7 @@ No metadata declaration needed for hooks. Presence = activation.
 
 Per the agentskills.io spec:
 1. **Metadata** (~100 tokens): `name` and `description` loaded at startup for all skills
-2. **Instructions** (<5000 tokens): full SKILL.md body loaded when the act phase starts
+2. **Instructions** (<5000 tokens): full SKILL.md body loaded when discovered by other agents; ACT.md loaded when targeted
 3. **Resources** (as needed): scripts, references, assets loaded on demand by hooks
 
 ## Work Item Schema Change
@@ -180,12 +210,13 @@ Same behavior: if the skill isn't found in the index, the work item stays queued
 
 The first skill created under this design: `skills/engage/` — social interaction.
 
-Ported from v1 (`~/animus/agent/engage/`). Demonstrates the full skill package:
-- **SKILL.md**: Relational presence methodology (from ON_ENGAGE.md)
+Ported from v1 (`~/animus/agent/engage/`). Demonstrates the full skill package with the SKILL.md/ACT.md split:
+- **SKILL.md**: General-purpose engagement methodology — presence over performance, weight matching, silence as response, context integration. Any agent can discover and use this.
+- **ACT.md**: The agent's soul — emotional grounding (the stakes, the ache, the wounds), cookie's body language, `<NO_RESPONSE/>` mechanism, orient context reading. Only read when a work item targets `skill: "engage"`.
 - **scripts/orient.sh**: Multi-stage context assembly (classify → extract tasks → formulate queries → recall memories → assemble context → write to ledger)
 - **scripts/consolidate.sh**: Result processing (check satisfaction → extract initiatives → detect episode boundary → form episode → log exchange → queue follow-ups)
 - **scripts/recover.sh**: Retry/dead-letter logic
-- **prompt/*.md**: Six sub-prompts for LLM calls within hooks
+- **prompt/*.md**: Seven sub-prompts for LLM calls within hooks (classify-inbound, extract-task, formulate-queries, check-satisfaction, extract-initiative, detect-episode-boundary, reflect)
 
 ### Speculative CLI Interface
 
@@ -207,21 +238,52 @@ The hook scripts call CLI commands that don't yet exist. This is TDD for the CLI
 
 These commands become green as the CLI is built out across milestones.
 
-## Skill Discovery (Two-Tier)
+## Skill Discovery (Three-Tier)
 
-Skills are discovered from two locations, searched in order:
+Skills are discovered from three locations, searched in order:
 
-1. **Instance skills**: `$XDG_DATA_HOME/animus/skills/` — per-instance, autopoietic
-2. **Shared skills**: repo `skills/` directory (or `/usr/local/share/animus/skills/`)
+1. **Instance skills**: `$XDG_DATA_HOME/animus/skills/` — per-instance, private, autopoietic
+2. **Community skills**: `$XDG_DATA_HOME/animus/community-skills/` — installed from external sources
+3. **Intrinsic skills**: `/app/skills/` (Docker) or repo `skills/` (dev) — ships with the system, read-only
 
-Instance skills override shared skills of the same name. Both are git-managed.
+Instance overrides community overrides intrinsic (same name = override).
+
+### Tier Details
+
+**Intrinsic** — live in the animus-rs repo (`skills/`). Canonical, version-locked with the engine. Docker build copies them into the container image. To change an intrinsic skill: fork, modify, PR.
+
+**Community** — installed from external sources (marketplaces, GitHub repos, registries). Managed via `animus skill install`. Kept separate from instance skills so upstream updates don't stomp autopoietic content.
+
+```toml
+# ~/.config/animus/config.toml
+[skills.sources]
+anthropic = "https://skills.anthropic.com/registry"
+openclaw = "https://openclaw.dev/skills"
+custom = "https://github.com/my-org/our-skills"
+```
+
+```sh
+animus skill install tdd-implementation          # from default source
+animus skill install openclaw/fancy-skill        # from specific source
+animus skill update                              # pull latest for all community skills
+```
+
+**Instance** — private, per-instance. Autopoietic skills created by the consolidate phase land here. Optionally backed by a git remote for backup. This is the instance's own knowledge — what it has learned and created.
 
 ## Relationship to agentskills.io
 
 Our skills are fully compatible with the agentskills.io standard:
-- Required fields: `name`, `description` — present
+- Required fields: `name`, `description` — present in SKILL.md
 - Optional fields: `metadata`, `compatibility` — used for animus-specific properties
 - Directory structure: `scripts/`, `references/`, `assets/` — standard
-- Additional: `prompt/` directory is our convention for sub-prompts used by hooks
+- Additional: `ACT.md` and `prompt/` directory are animus-specific conventions
 
-Skills authored for animus-rs could work in any agentskills.io-compatible agent (Cursor, Claude Code, Gemini CLI, etc.) that reads SKILL.md. The hooks and prompts are animus-specific extensions that other agents would ignore.
+**SKILL.md** authored for animus-rs works in any agentskills.io-compatible agent (Cursor, Claude Code, Gemini CLI, etc.). The `ACT.md`, hooks, and prompts are animus-specific — other agents ignore them and just read SKILL.md.
+
+## Skill Filtering
+
+Work items specify their **primary skill** — `skill: "engage"`. The act loop reads that skill's ACT.md (or SKILL.md).
+
+For **supporting skills** (additional methodology an agent can discover during the act loop), the approach is description-based: the agent reads all available SKILL.md descriptions and decides what's relevant. No explicit compatibility filtering — the LLM handles context matching.
+
+Agent skills (those with ACT.md + hooks) are inappropriate as supporting skills — they are complete agent definitions, not reusable methodology. Their SKILL.md provides the general-purpose portion; their ACT.md is only for targeted execution.
