@@ -100,7 +100,7 @@ impl super::LlmClient for OpenAiClient {
             }
 
             let json: serde_json::Value = resp.json().await?;
-            debug!("OpenAI response received");
+            debug!(response = %json, "OpenAI response received");
             return parse_response_body(json);
         }
     }
@@ -198,6 +198,8 @@ impl super::LlmClient for OpenAiClient {
                         continue;
                     }
                 };
+
+                debug!(sse_data = %data, "SSE chunk received");
 
                 // Extract finish_reason if present.
                 if let Some(reason) = data["choices"][0]["finish_reason"].as_str() {
