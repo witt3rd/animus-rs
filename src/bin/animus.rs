@@ -400,6 +400,66 @@ async fn cmd_work_show(db: &Db, id_str: String) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Assemble a system prompt from explicit text, context files, and stdin.
+///
+/// Order: system text, then files (each wrapped in markers), then stdin.
+#[allow(dead_code)] // wired in next commit
+fn build_system_prompt(
+    system: Option<&str>,
+    context_files: &[(String, String)],
+    stdin: Option<&str>,
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(text) = system {
+        parts.push(text.to_string());
+    }
+
+    for (path, content) in context_files {
+        parts.push(format!("--- FILE: {path} ---\n{content}\n--- END FILE ---"));
+    }
+
+    if let Some(input) = stdin {
+        parts.push(format!("--- STDIN ---\n{input}\n--- END STDIN ---"));
+    }
+
+    parts.join("\n\n")
+}
+
+/// Render the user prompt from inline text or a Tera template file with variable substitutions.
+#[allow(dead_code)] // wired in next commit
+fn render_prompt(
+    prompt: Option<&str>,
+    prompt_file: Option<&std::path::Path>,
+    vars: &[(String, String)],
+) -> anyhow::Result<String> {
+    match (prompt, prompt_file) {
+        (Some(text), None) => {
+            // Even inline prompts may contain Tera expressions
+            let mut tera = tera::Tera::default();
+            tera.add_raw_template("inline", text)?;
+            let mut ctx = tera::Context::new();
+            for (k, v) in vars {
+                ctx.insert(k.as_str(), v);
+            }
+            Ok(tera.render("inline", &ctx)?)
+        }
+        (None, Some(path)) => {
+            let template = std::fs::read_to_string(path)
+                .map_err(|e| anyhow::anyhow!("cannot read prompt file {}: {e}", path.display()))?;
+            let mut tera = tera::Tera::default();
+            tera.add_raw_template("file", &template)?;
+            let mut ctx = tera::Context::new();
+            for (k, v) in vars {
+                ctx.insert(k.as_str(), v);
+            }
+            Ok(tera.render("file", &ctx)?)
+        }
+        (None, None) => anyhow::bail!("one of --prompt or --prompt-file is required"),
+        (Some(_), Some(_)) => anyhow::bail!("--prompt and --prompt-file are mutually exclusive"),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn cmd_llm_complete(
     _prompt: Option<String>,
@@ -413,4 +473,136 @@ async fn cmd_llm_complete(
     _max_tokens: Option<u32>,
 ) -> anyhow::Result<()> {
     anyhow::bail!("not yet implemented")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── build_system_prompt ──────────────────────────────────────────
+
+    #[test]
+    fn build_system_prompt_empty_inputs() {
+        let result = build_system_prompt(None, &[], None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn build_system_prompt_system_only() {
+        let result = build_system_prompt(Some("You are a helpful assistant."), &[], None);
+        assert_eq!(result, "You are a helpful assistant.");
+    }
+
+    #[test]
+    fn build_system_prompt_with_context_files() {
+        let files = vec![
+            ("README.md".to_string(), "# Hello".to_string()),
+            ("notes.txt".to_string(), "some notes".to_string()),
+        ];
+        let result = build_system_prompt(None, &files, None);
+        assert!(result.contains("--- FILE: README.md ---"));
+        assert!(result.contains("# Hello"));
+        assert!(result.contains("--- END FILE ---"));
+        assert!(result.contains("--- FILE: notes.txt ---"));
+        assert!(result.contains("some notes"));
+    }
+
+    #[test]
+    fn build_system_prompt_with_stdin() {
+        let result = build_system_prompt(None, &[], Some("piped input"));
+        assert!(result.contains("--- STDIN ---"));
+        assert!(result.contains("piped input"));
+        assert!(result.contains("--- END STDIN ---"));
+    }
+
+    #[test]
+    fn build_system_prompt_ordering() {
+        let files = vec![("f.txt".to_string(), "file content".to_string())];
+        let result = build_system_prompt(Some("system text"), &files, Some("stdin text"));
+
+        let sys_pos = result.find("system text").unwrap();
+        let file_pos = result.find("--- FILE: f.txt ---").unwrap();
+        let stdin_pos = result.find("--- STDIN ---").unwrap();
+
+        assert!(sys_pos < file_pos, "system should come before files");
+        assert!(file_pos < stdin_pos, "files should come before stdin");
+    }
+
+    // ── render_prompt ────────────────────────────────────────────────
+
+    #[test]
+    fn render_prompt_inline() {
+        let result = render_prompt(Some("Hello, world!"), None, &[]).unwrap();
+        assert_eq!(result, "Hello, world!");
+    }
+
+    #[test]
+    fn render_prompt_inline_with_vars() {
+        let vars = vec![("name".to_string(), "Alice".to_string())];
+        let result = render_prompt(Some("Hello, {{ name }}!"), None, &vars).unwrap();
+        assert_eq!(result, "Hello, Alice!");
+    }
+
+    #[test]
+    fn render_prompt_file() {
+        let dir = std::env::temp_dir().join("animus_test_render_prompt");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("prompt.txt");
+        std::fs::write(&file, "Summarize {{ topic }} in {{ style }} style.").unwrap();
+
+        let vars = vec![
+            ("topic".to_string(), "Rust".to_string()),
+            ("style".to_string(), "concise".to_string()),
+        ];
+        let result = render_prompt(None, Some(&file), &vars).unwrap();
+        assert_eq!(result, "Summarize Rust in concise style.");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn render_prompt_neither_provided() {
+        let result = render_prompt(None, None, &[]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("--prompt or --prompt-file")
+        );
+    }
+
+    #[test]
+    fn render_prompt_both_provided() {
+        let result = render_prompt(Some("inline"), Some(std::path::Path::new("dummy.txt")), &[]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("mutually exclusive")
+        );
+    }
+
+    // ── parse_key_val ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_key_val_valid() {
+        let (k, v) = parse_key_val("name=Alice").unwrap();
+        assert_eq!(k, "name");
+        assert_eq!(v, "Alice");
+    }
+
+    #[test]
+    fn parse_key_val_value_with_equals() {
+        let (k, v) = parse_key_val("expr=a=b").unwrap();
+        assert_eq!(k, "expr");
+        assert_eq!(v, "a=b");
+    }
+
+    #[test]
+    fn parse_key_val_no_equals() {
+        let result = parse_key_val("noequals");
+        assert!(result.is_err());
+    }
 }
