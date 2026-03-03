@@ -4,6 +4,7 @@
 //! types to and from the OpenAI Chat Completions JSON format. Handles both
 //! synchronous and streaming calls over a thin `reqwest` HTTP client.
 
+use async_trait::async_trait;
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedSender;
@@ -18,9 +19,10 @@ const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
 /// Thin client for the OpenAI Chat Completions endpoint.
 ///
-/// Owns a `reqwest::Client`, an API key, and retry configuration. Exposes
-/// `complete()` for synchronous calls and `complete_stream()` for SSE streaming.
-/// Task 6 will add a `LlmClient` trait and make this struct implement it.
+/// Owns a `reqwest::Client`, an API key, and retry configuration. Implements
+/// the [`LlmClient`](super::LlmClient) trait for both non-streaming and
+/// streaming completions.
+#[derive(Debug)]
 pub struct OpenAiClient {
     http: reqwest::Client,
     api_key: SecretString,
@@ -43,14 +45,14 @@ impl OpenAiClient {
     pub fn with_defaults(api_key: SecretString) -> Self {
         Self::new(api_key, DEFAULT_BASE_URL.to_string(), 3)
     }
+}
 
+#[async_trait]
+impl super::LlmClient for OpenAiClient {
     /// Send a completion request and return the full response.
     ///
     /// Retries on 429 (rate limited) up to `max_retries` times with exponential backoff.
-    pub async fn complete(
-        &self,
-        request: &CompletionRequest,
-    ) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse, LlmError> {
         let body = build_request_body(request, false);
         let url = format!("{}/chat/completions", self.base_url);
 
@@ -106,7 +108,7 @@ impl OpenAiClient {
     /// Send a streaming completion request, emitting events to `tx`.
     ///
     /// Returns the final aggregated response once the stream ends.
-    pub async fn complete_stream(
+    async fn complete_stream(
         &self,
         request: &CompletionRequest,
         tx: &UnboundedSender<StreamEvent>,
