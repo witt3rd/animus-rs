@@ -149,6 +149,7 @@ impl super::LlmClient for OpenAiClient {
 
         let mut sse_parser = SseParser::new();
         let mut content_blocks: Vec<ContentBlock> = Vec::new();
+        let mut current_thinking = String::new();
         let mut current_text = String::new();
         let mut current_tool_id = String::new();
         let mut current_tool_name = String::new();
@@ -163,6 +164,12 @@ impl super::LlmClient for OpenAiClient {
 
             for event in sse_parser.feed(&chunk_str) {
                 if event.data == "[DONE]" {
+                    // Flush any pending thinking.
+                    if !current_thinking.is_empty() {
+                        content_blocks.push(ContentBlock::Thinking {
+                            thinking: std::mem::take(&mut current_thinking),
+                        });
+                    }
                     // Flush any pending text.
                     if !current_text.is_empty() {
                         content_blocks.push(ContentBlock::Text {
@@ -208,6 +215,14 @@ impl super::LlmClient for OpenAiClient {
                 }
 
                 let delta = &data["choices"][0]["delta"];
+
+                // Reasoning/thinking content delta (reasoning models).
+                if let Some(thinking) = delta["reasoning_content"].as_str() {
+                    current_thinking.push_str(thinking);
+                    let _ = tx.send(StreamEvent::ThinkingDelta {
+                        text: thinking.to_string(),
+                    });
+                }
 
                 // Text content delta.
                 if let Some(text) = delta["content"].as_str() {
@@ -390,6 +405,9 @@ fn serialize_assistant_message(content: &[ContentBlock], messages: &mut Vec<serd
             ContentBlock::Text { text } => {
                 text_parts.push(text.clone());
             }
+            ContentBlock::Thinking { .. } => {
+                // Thinking blocks are not sent back in conversation history
+            }
             ContentBlock::ToolUse { id, name, input } => {
                 tool_calls.push(json!({
                     "id": id,
@@ -427,6 +445,15 @@ pub(crate) fn parse_response_body(json: serde_json::Value) -> Result<CompletionR
 
     let message = &choice["message"];
     let mut content = Vec::new();
+
+    // Reasoning/thinking content (reasoning models: o1, DeepSeek-R1, Grok).
+    if let Some(thinking) = message["reasoning_content"].as_str()
+        && !thinking.is_empty()
+    {
+        content.push(ContentBlock::Thinking {
+            thinking: thinking.to_string(),
+        });
+    }
 
     // Text content.
     if let Some(text) = message["content"].as_str()
@@ -677,6 +704,29 @@ mod tests {
         assert_eq!(resp.content.len(), 2);
         assert!(matches!(&resp.content[0], ContentBlock::Text { .. }));
         assert!(matches!(&resp.content[1], ContentBlock::ToolUse { .. }));
+    }
+
+    #[test]
+    fn parse_reasoning_content() {
+        let json = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "reasoning_content": "Let me think step by step...",
+                    "content": "The answer is 4."
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30 }
+        });
+        let resp = parse_response_body(json).unwrap();
+        assert_eq!(resp.content.len(), 2);
+        assert!(
+            matches!(&resp.content[0], ContentBlock::Thinking { thinking } if thinking == "Let me think step by step...")
+        );
+        assert!(
+            matches!(&resp.content[1], ContentBlock::Text { text } if text == "The answer is 4.")
+        );
     }
 
     #[test]

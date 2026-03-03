@@ -471,32 +471,62 @@ fn response_text(response: &animus_rs::llm::CompletionResponse) -> String {
         .join("")
 }
 
+/// Extract thinking/reasoning content from a completion response.
+fn response_thinking(response: &animus_rs::llm::CompletionResponse) -> String {
+    response
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            animus_rs::llm::ContentBlock::Thinking { thinking } => Some(thinking.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 /// Format output according to the requested format.
 fn format_output(
     text: &str,
+    thinking: &str,
     usage: &animus_rs::llm::Usage,
     format: &str,
 ) -> anyhow::Result<String> {
     match format {
         "text" => Ok(text.to_string()),
-        "json" => Ok(serde_json::to_string_pretty(&serde_json::json!({
-            "text": text,
-            "usage": {
-                "input": usage.input_tokens,
-                "output": usage.output_tokens,
+        "json" => {
+            let mut obj = serde_json::json!({
+                "text": text,
+                "usage": {
+                    "input": usage.input_tokens,
+                    "output": usage.output_tokens,
+                }
+            });
+            if !thinking.is_empty() {
+                obj["thinking"] = serde_json::json!(thinking);
             }
-        }))?),
+            Ok(serde_json::to_string_pretty(&obj)?)
+        }
         "yaml" => {
             // Hand-formatted YAML — no extra dependency
+            let mut out = String::new();
+            if !thinking.is_empty() {
+                let indented: String = thinking
+                    .lines()
+                    .map(|line| format!("  {line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                out.push_str(&format!("thinking: |\n{indented}\n"));
+            }
             let indented: String = text
                 .lines()
                 .map(|line| format!("  {line}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            Ok(format!(
+            out.push_str(&format!(
                 "text: |\n{indented}\nusage:\n  input: {}\n  output: {}",
                 usage.input_tokens, usage.output_tokens,
-            ))
+            ));
+            Ok(out)
         }
         other => anyhow::bail!("unknown format '{other}' — expected text, json, or yaml"),
     }
@@ -586,14 +616,32 @@ async fn cmd_llm_complete(
         let handle =
             tokio::spawn(async move { stream_client.complete_stream(&stream_request, &tx).await });
 
-        // Print text deltas as they arrive
+        // Print deltas as they arrive
         let mut full_text = String::new();
+        let mut full_thinking = String::new();
+        let mut in_thinking = false;
         while let Some(event) = rx.recv().await {
             match event {
+                animus_rs::llm::StreamEvent::ThinkingDelta { text } => {
+                    full_thinking.push_str(&text);
+                    if format == "text" {
+                        use std::io::Write;
+                        if !in_thinking {
+                            in_thinking = true;
+                            eprint!("\x1b[2m"); // dim
+                        }
+                        eprint!("{text}");
+                        std::io::stderr().flush().ok();
+                    }
+                }
                 animus_rs::llm::StreamEvent::TextDelta { text } => {
                     full_text.push_str(&text);
                     if format == "text" {
                         use std::io::Write;
+                        if in_thinking {
+                            in_thinking = false;
+                            eprintln!("\x1b[0m"); // reset, newline
+                        }
                         print!("{text}");
                         std::io::stdout().flush().ok();
                     }
@@ -602,6 +650,9 @@ async fn cmd_llm_complete(
                 _ => {}
             }
         }
+        if in_thinking {
+            eprint!("\x1b[0m");
+        }
 
         let response = handle.await??;
 
@@ -609,14 +660,19 @@ async fn cmd_llm_complete(
             // We already printed the text, just add a trailing newline
             println!();
         } else {
-            let output = format_output(&full_text, &response.usage, &format)?;
+            let output = format_output(&full_text, &full_thinking, &response.usage, &format)?;
             println!("{output}");
         }
     } else {
         // Non-streaming path
         let response = client.complete(&request).await?;
+        let thinking = response_thinking(&response);
+        if !thinking.is_empty() && format == "text" {
+            // Print thinking dimmed to stderr
+            eprintln!("\x1b[2m{thinking}\x1b[0m");
+        }
         let text = response_text(&response);
-        let output = format_output(&text, &response.usage, &format)?;
+        let output = format_output(&text, &thinking, &response.usage, &format)?;
         println!("{output}");
     }
 
@@ -740,7 +796,7 @@ mod tests {
             input_tokens: 10,
             output_tokens: 20,
         };
-        let result = format_output("hello world", &usage, "text").unwrap();
+        let result = format_output("hello world", "", &usage, "text").unwrap();
         assert_eq!(result, "hello world");
     }
 
@@ -750,11 +806,24 @@ mod tests {
             input_tokens: 10,
             output_tokens: 20,
         };
-        let result = format_output("hello", &usage, "json").unwrap();
+        let result = format_output("hello", "", &usage, "json").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["text"], "hello");
         assert_eq!(parsed["usage"]["input"], 10);
         assert_eq!(parsed["usage"]["output"], 20);
+        assert!(parsed.get("thinking").is_none());
+    }
+
+    #[test]
+    fn format_output_json_with_thinking() {
+        let usage = animus_rs::llm::Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+        };
+        let result = format_output("answer", "let me think...", &usage, "json").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["text"], "answer");
+        assert_eq!(parsed["thinking"], "let me think...");
     }
 
     #[test]
@@ -763,12 +832,13 @@ mod tests {
             input_tokens: 10,
             output_tokens: 20,
         };
-        let result = format_output("hello\nworld", &usage, "yaml").unwrap();
+        let result = format_output("hello\nworld", "", &usage, "yaml").unwrap();
         assert!(result.contains("text: |"));
         assert!(result.contains("  hello"));
         assert!(result.contains("  world"));
         assert!(result.contains("input: 10"));
         assert!(result.contains("output: 20"));
+        assert!(!result.contains("thinking"));
     }
 
     #[test]
@@ -777,7 +847,7 @@ mod tests {
             input_tokens: 0,
             output_tokens: 0,
         };
-        let result = format_output("x", &usage, "xml");
+        let result = format_output("x", "", &usage, "xml");
         assert!(result.is_err());
     }
 

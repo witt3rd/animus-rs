@@ -68,6 +68,8 @@ pub enum UserContent {
 pub enum ContentBlock {
     /// Text output.
     Text { text: String },
+    /// Reasoning/thinking from a reasoning model (e.g., o1, DeepSeek-R1, Grok).
+    Thinking { thinking: String },
     /// Tool call request.
     ToolUse {
         id: String,
@@ -109,6 +111,8 @@ pub struct ToolDefinition {
 pub enum StreamEvent {
     /// A chunk of text output.
     TextDelta { text: String },
+    /// A chunk of reasoning/thinking output from a reasoning model.
+    ThinkingDelta { text: String },
     /// Partial JSON for a tool call's input.
     ToolInputDelta { tool_use_id: String, json: String },
     /// A tool call is starting.
