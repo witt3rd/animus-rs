@@ -403,7 +403,6 @@ async fn cmd_work_show(db: &Db, id_str: String) -> anyhow::Result<()> {
 /// Assemble a system prompt from explicit text, context files, and stdin.
 ///
 /// Order: system text, then files (each wrapped in markers), then stdin.
-#[allow(dead_code)] // wired in next commit
 fn build_system_prompt(
     system: Option<&str>,
     context_files: &[(String, String)],
@@ -427,7 +426,6 @@ fn build_system_prompt(
 }
 
 /// Render the user prompt from inline text or a Tera template file with variable substitutions.
-#[allow(dead_code)] // wired in next commit
 fn render_prompt(
     prompt: Option<&str>,
     prompt_file: Option<&std::path::Path>,
@@ -460,19 +458,169 @@ fn render_prompt(
     }
 }
 
+/// Extract text content from a completion response.
+fn response_text(response: &animus_rs::llm::CompletionResponse) -> String {
+    response
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            animus_rs::llm::ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+/// Format output according to the requested format.
+fn format_output(
+    text: &str,
+    usage: &animus_rs::llm::Usage,
+    format: &str,
+) -> anyhow::Result<String> {
+    match format {
+        "text" => Ok(text.to_string()),
+        "json" => Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "text": text,
+            "usage": {
+                "input": usage.input_tokens,
+                "output": usage.output_tokens,
+            }
+        }))?),
+        "yaml" => {
+            // Hand-formatted YAML — no extra dependency
+            let indented: String = text
+                .lines()
+                .map(|line| format!("  {line}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(format!(
+                "text: |\n{indented}\nusage:\n  input: {}\n  output: {}",
+                usage.input_tokens, usage.output_tokens,
+            ))
+        }
+        other => anyhow::bail!("unknown format '{other}' — expected text, json, or yaml"),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn cmd_llm_complete(
-    _prompt: Option<String>,
-    _prompt_file: Option<PathBuf>,
-    _vars: Vec<(String, String)>,
-    _context_files: Vec<PathBuf>,
-    _system: Option<String>,
-    _model: Option<String>,
-    _format: String,
-    _stream: bool,
-    _max_tokens: Option<u32>,
+    prompt: Option<String>,
+    prompt_file: Option<PathBuf>,
+    vars: Vec<(String, String)>,
+    context_files: Vec<PathBuf>,
+    system: Option<String>,
+    model: Option<String>,
+    format: String,
+    stream: bool,
+    max_tokens: Option<u32>,
 ) -> anyhow::Result<()> {
-    anyhow::bail!("not yet implemented")
+    // Load LLM config from env (does not require DATABASE_URL)
+    let provider = std::env::var("LLM_PROVIDER")
+        .map_err(|_| anyhow::anyhow!("LLM_PROVIDER is not set — configure LLM env vars"))?;
+    let api_key = secrecy::SecretString::from(
+        std::env::var("LLM_API_KEY").map_err(|_| anyhow::anyhow!("LLM_API_KEY is not set"))?,
+    );
+    let config_model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
+    let config_max_tokens: u32 = std::env::var("LLM_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8192);
+    let max_retries: u32 = std::env::var("LLM_MAX_RETRIES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+
+    let llm_config = animus_rs::llm::LlmConfig {
+        provider,
+        api_key,
+        base_url: std::env::var("LLM_BASE_URL").ok(),
+        model: model.unwrap_or(config_model),
+        max_tokens: max_tokens.unwrap_or(config_max_tokens),
+        max_retries,
+    };
+
+    let client = animus_rs::llm::create_client(&llm_config)?;
+
+    // Read context files
+    let mut file_contents: Vec<(String, String)> = Vec::new();
+    for path in &context_files {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("cannot read context file {}: {e}", path.display()))?;
+        file_contents.push((path.display().to_string(), content));
+    }
+
+    // Read stdin if not a TTY
+    let stdin_content = if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+        if buf.is_empty() { None } else { Some(buf) }
+    } else {
+        None
+    };
+
+    // Build system prompt
+    let system_prompt =
+        build_system_prompt(system.as_deref(), &file_contents, stdin_content.as_deref());
+
+    // Render user prompt
+    let user_text = render_prompt(prompt.as_deref(), prompt_file.as_deref(), &vars)?;
+
+    // Build completion request
+    let request = animus_rs::llm::CompletionRequest {
+        model: llm_config.model.clone(),
+        system: system_prompt,
+        messages: vec![animus_rs::llm::Message::User {
+            content: vec![animus_rs::llm::UserContent::Text { text: user_text }],
+        }],
+        tools: vec![],
+        max_tokens: llm_config.max_tokens,
+        temperature: None,
+    };
+
+    if stream {
+        // Streaming path
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let stream_client = client;
+        let stream_request = request.clone();
+        let handle =
+            tokio::spawn(async move { stream_client.complete_stream(&stream_request, &tx).await });
+
+        // Print text deltas as they arrive
+        let mut full_text = String::new();
+        while let Some(event) = rx.recv().await {
+            match event {
+                animus_rs::llm::StreamEvent::TextDelta { text } => {
+                    full_text.push_str(&text);
+                    if format == "text" {
+                        use std::io::Write;
+                        print!("{text}");
+                        std::io::stdout().flush().ok();
+                    }
+                }
+                animus_rs::llm::StreamEvent::Done => break,
+                _ => {}
+            }
+        }
+
+        let response = handle.await??;
+
+        if format == "text" {
+            // We already printed the text, just add a trailing newline
+            println!();
+        } else {
+            let output = format_output(&full_text, &response.usage, &format)?;
+            println!("{output}");
+        }
+    } else {
+        // Non-streaming path
+        let response = client.complete(&request).await?;
+        let text = response_text(&response);
+        let output = format_output(&text, &response.usage, &format)?;
+        println!("{output}");
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -582,6 +730,93 @@ mod tests {
                 .to_string()
                 .contains("mutually exclusive")
         );
+    }
+
+    // ── format_output ─────────────────────────────────────────────────
+
+    #[test]
+    fn format_output_text() {
+        let usage = animus_rs::llm::Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+        };
+        let result = format_output("hello world", &usage, "text").unwrap();
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn format_output_json() {
+        let usage = animus_rs::llm::Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+        };
+        let result = format_output("hello", &usage, "json").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["text"], "hello");
+        assert_eq!(parsed["usage"]["input"], 10);
+        assert_eq!(parsed["usage"]["output"], 20);
+    }
+
+    #[test]
+    fn format_output_yaml() {
+        let usage = animus_rs::llm::Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+        };
+        let result = format_output("hello\nworld", &usage, "yaml").unwrap();
+        assert!(result.contains("text: |"));
+        assert!(result.contains("  hello"));
+        assert!(result.contains("  world"));
+        assert!(result.contains("input: 10"));
+        assert!(result.contains("output: 20"));
+    }
+
+    #[test]
+    fn format_output_unknown() {
+        let usage = animus_rs::llm::Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+        };
+        let result = format_output("x", &usage, "xml");
+        assert!(result.is_err());
+    }
+
+    // ── response_text ───────────────────────────────────────────────
+
+    #[test]
+    fn response_text_extracts_text_blocks() {
+        let response = animus_rs::llm::CompletionResponse {
+            content: vec![
+                animus_rs::llm::ContentBlock::Text {
+                    text: "hello ".into(),
+                },
+                animus_rs::llm::ContentBlock::Text {
+                    text: "world".into(),
+                },
+            ],
+            stop_reason: animus_rs::llm::StopReason::EndTurn,
+            usage: animus_rs::llm::Usage::default(),
+        };
+        assert_eq!(response_text(&response), "hello world");
+    }
+
+    #[test]
+    fn response_text_skips_tool_use() {
+        let response = animus_rs::llm::CompletionResponse {
+            content: vec![
+                animus_rs::llm::ContentBlock::Text {
+                    text: "result".into(),
+                },
+                animus_rs::llm::ContentBlock::ToolUse {
+                    id: "call_1".into(),
+                    name: "search".into(),
+                    input: serde_json::json!({}),
+                },
+            ],
+            stop_reason: animus_rs::llm::StopReason::EndTurn,
+            usage: animus_rs::llm::Usage::default(),
+        };
+        assert_eq!(response_text(&response), "result");
     }
 
     // ── parse_key_val ────────────────────────────────────────────────
