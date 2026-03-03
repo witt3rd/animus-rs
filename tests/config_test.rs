@@ -1,14 +1,21 @@
 use animus_rs::config::Config;
+use std::sync::Mutex;
+
+/// Env var mutations are process-global and not thread-safe. All config tests
+/// must hold this lock to avoid races between set_var/remove_var calls.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn config_from_env_loads_required_fields() {
+    let _lock = ENV_LOCK.lock().unwrap();
     unsafe {
         std::env::set_var("DATABASE_URL", "postgres://test:test@localhost/test");
+        std::env::remove_var("LLM_PROVIDER");
     }
 
     let config = Config::from_env().unwrap();
     assert!(!config.log_level.is_empty());
-    assert!(config.llm.is_none()); // LLM config is optional
+    assert!(config.llm.is_none());
 
     unsafe {
         std::env::remove_var("DATABASE_URL");
@@ -17,6 +24,7 @@ fn config_from_env_loads_required_fields() {
 
 #[test]
 fn config_from_env_fails_without_required() {
+    let _lock = ENV_LOCK.lock().unwrap();
     unsafe {
         std::env::remove_var("DATABASE_URL");
     }
@@ -27,6 +35,7 @@ fn config_from_env_fails_without_required() {
 
 #[test]
 fn config_loads_llm_when_provider_set() {
+    let _lock = ENV_LOCK.lock().unwrap();
     unsafe {
         std::env::set_var("DATABASE_URL", "postgres://test:test@localhost/test");
         std::env::set_var("LLM_PROVIDER", "xai");
