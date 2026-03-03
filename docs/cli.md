@@ -152,28 +152,44 @@ tdd-implementation    true        worktree   orient, consolidate
 
 ### `animus llm complete`
 
-Run a sub-LLM call. Used by hook scripts for classification, extraction, and other pipeline stages.
+Run an LLM completion. Used by hook scripts and interactively.
 
 ```
-animus llm complete --prompt-file PATH [--var key=value]... [--model MODEL] [--format FORMAT]
+animus llm complete [OPTIONS]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--prompt-file` | required | Markdown prompt with `{{ var }}` placeholders |
-| `--var` | none | Template variable substitution (repeatable) |
-| `--model` | `sonnet` | Model to use (sonnet, opus, haiku) |
-| `--format` | `text` | Output format (text, yaml, json) |
+| `--prompt TEXT` | - | Inline user prompt (mutually exclusive with --prompt-file) |
+| `--prompt-file PATH` | - | Tera template file as user prompt |
+| `--var KEY=VALUE` | - | Template variable (repeatable) |
+| `--context-file PATH` | - | File to include in system context (repeatable, ordered) |
+| `--system TEXT` | - | Explicit system prompt (prepended before context files) |
+| `--model MODEL` | from config | Override LLM_MODEL |
+| `--format FORMAT` | `text` | Output format (text, json, yaml) |
+| `--stream` | false | Stream tokens to stdout as they arrive |
+| `--max-tokens N` | from config | Override LLM_MAX_TOKENS |
+
+Stdin: if not a TTY, read and include as context after `--context-file` contents.
 
 ```sh
+# Inline prompt with context files
+animus llm complete \
+  --context-file docs/llm.md \
+  --prompt "Summarize this document"
+
+# Template with variables
 animus llm complete \
   --prompt-file skills/engage/prompt/classify-inbound.md \
   --var person="kelly" \
   --var message="hey cookie!" \
   --format yaml
-```
 
-*Used extensively by orient/consolidate hooks. See `skills/engage/scripts/` for examples.*
+# Pipe stdin + streaming
+cat src/llm/openai.rs | animus llm complete \
+  --prompt "Review this code" \
+  --stream
+```
 
 ### `animus memory search`
 
@@ -291,7 +307,7 @@ The CLI grows with the system. Current priority:
 
 1. **`animus serve`** — control plane daemon (exists)
 2. **`animus work submit/list/show`** — work management (exists)
-3. **`animus llm complete`** — sub-LLM calls for hook scripts (needed for orient/consolidate)
+3. **`animus llm complete`** — sub-LLM calls for hook scripts (exists)
 4. **`animus memory search`** — vector search for hook scripts
 5. **`animus ledger append/show`** — ledger operations (needed for M4)
 6. **`animus skill list`** — skill discovery
