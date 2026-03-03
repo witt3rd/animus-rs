@@ -34,6 +34,11 @@ enum Command {
         #[command(subcommand)]
         action: WorkAction,
     },
+    /// LLM sub-commands
+    Llm {
+        #[command(subcommand)]
+        action: LlmAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -79,6 +84,47 @@ enum WorkAction {
     },
 }
 
+#[derive(Subcommand)]
+enum LlmAction {
+    /// Run an LLM completion
+    Complete {
+        /// Inline prompt text (mutually exclusive with --prompt-file)
+        #[arg(long, group = "prompt_source")]
+        prompt: Option<String>,
+        /// Path to a Tera template file (mutually exclusive with --prompt)
+        #[arg(long, group = "prompt_source")]
+        prompt_file: Option<PathBuf>,
+        /// Template variable (repeatable): KEY=VALUE
+        #[arg(long = "var", value_parser = parse_key_val)]
+        vars: Vec<(String, String)>,
+        /// Context file to include in system prompt (repeatable)
+        #[arg(long = "context-file")]
+        context_files: Vec<PathBuf>,
+        /// Explicit system prompt text
+        #[arg(long)]
+        system: Option<String>,
+        /// Override model from config
+        #[arg(long)]
+        model: Option<String>,
+        /// Output format: text, json, yaml
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Stream output tokens as they arrive
+        #[arg(long)]
+        stream: bool,
+        /// Override max tokens from config
+        #[arg(long)]
+        max_tokens: Option<u32>,
+    },
+}
+
+fn parse_key_val(s: &str) -> Result<(String, String), String> {
+    let pos = s
+        .find('=')
+        .ok_or_else(|| format!("invalid KEY=VALUE: no '=' found in '{s}'"))?;
+    Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -118,6 +164,32 @@ async fn main() -> anyhow::Result<()> {
                 WorkAction::Show { id } => cmd_work_show(&db, id).await,
             }
         }
+        Command::Llm { action } => match action {
+            LlmAction::Complete {
+                prompt,
+                prompt_file,
+                vars,
+                context_files,
+                system,
+                model,
+                format,
+                stream,
+                max_tokens,
+            } => {
+                cmd_llm_complete(
+                    prompt,
+                    prompt_file,
+                    vars,
+                    context_files,
+                    system,
+                    model,
+                    format,
+                    stream,
+                    max_tokens,
+                )
+                .await
+            }
+        },
     }
 }
 
@@ -326,4 +398,19 @@ async fn cmd_work_show(db: &Db, id_str: String) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_llm_complete(
+    _prompt: Option<String>,
+    _prompt_file: Option<PathBuf>,
+    _vars: Vec<(String, String)>,
+    _context_files: Vec<PathBuf>,
+    _system: Option<String>,
+    _model: Option<String>,
+    _format: String,
+    _stream: bool,
+    _max_tokens: Option<u32>,
+) -> anyhow::Result<()> {
+    anyhow::bail!("not yet implemented")
 }
