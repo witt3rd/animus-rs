@@ -4,8 +4,8 @@
 //! persist, and become.
 //!
 //! Data plane (work queues via pgmq, semantic memory via pgvector), control
-//! plane (queue watching, resource gating, focus spawning), faculties
-//! (pluggable cognitive specializations), LLM abstraction (rig-core), and
+//! plane (queue watching, resource gating, focus spawning), skills
+//! (pluggable cognitive specializations), LLM abstraction, and
 //! observability (OpenTelemetry). All on Postgres.
 
 pub mod config;
