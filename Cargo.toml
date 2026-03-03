@@ -24,9 +24,14 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
-# LLM + Embeddings (Rig)
+# LLM + Embeddings (Rig) — rig-core retained for embeddings (pgvector via rig-postgres)
 rig-core = "0.31"
 rig-postgres = "0.1"
+
+# LLM — thin provider clients
+reqwest = { version = "0.12", features = ["json", "stream"] }
+async-trait = "0.1"
+futures-util = "0.3"
 
 # OpenTelemetry
 opentelemetry = "0.31"
@@ -39,7 +44,6 @@ tracing-opentelemetry = "0.32"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
-reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 
 [[bin]]
